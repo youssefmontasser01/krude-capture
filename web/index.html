@@ -217,6 +217,7 @@ async function dropRec(id){await DB.delRange('chunks',id+':',id+':~');await DB.d
 /* ---------- draft (what is on the screen now) ---------- */
 const draft={recId:null,audio:null,mime:'',secs:0,photos:[],hint:''};
 const HINTS=['Note','Idea','Task','Issue'];
+const FUNCTIONS=['Design','Product Development','Production','Commercial','Fulfilment','Fulfilment - Website','Finance','Legal and Admin','Leadership','Capture'];
 function renderHints(){$('hints').innerHTML=HINTS.map(h=>`<button class="chip ${draft.hint===h?'on':''}" data-h="${h}">${h}</button>`).join('');}
 $('hints').onclick=e=>{const h=e.target.dataset.h;if(!h)return;draft.hint=draft.hint===h?'':h;renderHints();};
 $('txt').value=LS.get('krude_draft_text')||'';
@@ -330,9 +331,11 @@ function openReview(c){reviewing={c,choice:{}};
   $('sheetIn').querySelectorAll('.seg').forEach(seg=>seg.onclick=e=>{const v=e.target.dataset.v;if(!v)return;reviewing.choice[seg.dataset.id]=v;seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));});
   $('rClose').onclick=closeSheet;$('rApply').onclick=applyReview;}
 function propHTML(x){const f=x.fields||{},done=FINAL.includes(x.status)||(x.status==='waiting'&&!ME.admin);
-  const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?`<select data-f="owner" data-id="${x.id}"><option value="">—</option>${['Youssef','Ahmad'].map(o=>`<option ${f.owner===o?'selected':''}>${o}</option>`).join('')}</select>`:`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
+  const sel=(k,opts)=>`<select data-f="${k}" data-id="${x.id}"><option value="">—</option>${opts.map(o=>`<option ${f[k]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?sel('owner',['Youssef','Ahmad']):k==='function'?sel('function',FUNCTIONS):`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
   let extra='';
-  if(!done&&x.destination==='board_task')extra=`<div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}</div>`;
+  if(!done&&x.destination==='board_task')extra=`<div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}${fld('product','Product')}${fld('function','Function')}</div>
+    ${!f.owner||!f.due_date?'<div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.</div>':''}`;
   if(!done&&x.destination==='supplier')extra=`<div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div>`;
   const approve=x.can_confirm?'Approve':'To Youssef';
   return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)} → ${esc(DEST[x.destination]||x.destination)}</span>
@@ -409,7 +412,8 @@ let BOARD=null,BFILTER=null;
 try{BOARD=JSON.parse(LS.get('krude_board')||'null')}catch(e){}
 async function loadBoard(){try{BOARD=await call('board',{},60000);LS.set('krude_board',JSON.stringify(BOARD));renderBoard();}
   catch(e){toast('Board: '+e.message);}}
-const isDone=t=>/^(done|complete|completed|finished)$/i.test(t.status.trim());
+// Closed = done or dropped. Closed tasks are not open and not overdue.
+const isDone=t=>/^(done|complete|completed|finished|dropped|cancelled|canceled)$/i.test(t.status.trim());
 const dueKey=t=>/^\d{4}-\d{2}-\d{2}/.test(t.due)?t.due.slice(0,10):(t.due&&!isNaN(Date.parse(t.due))?new Date(t.due).toISOString().slice(0,10):'9999');
 function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
   $('bFilters').innerHTML=[ME.name,ME.name==='Youssef'?'Ahmad':'Youssef','All'].map(g=>`<button class="chip ${BFILTER===g?'on':''}" data-b="${g}">${g==='All'?'All':g===ME.name?'Me':g}</button>`).join('');
@@ -417,13 +421,13 @@ function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
   const today=BOARD.today,mine=t=>BFILTER==='All'||t.owner.toLowerCase().includes(BFILTER.toLowerCase());
   const open=BOARD.tasks.filter(t=>mine(t)&&!isDone(t)).sort((a,b)=>dueKey(a).localeCompare(dueKey(b)));
   const done=BOARD.tasks.filter(t=>mine(t)&&isDone(t));
-  const row=t=>{const over=!isDone(t)&&dueKey(t)<today;const st=/block/i.test(t.status)?'bad':/progress/i.test(t.status)?'wait':isDone(t)?'ok':'';
+  const row=t=>{const over=!isDone(t)&&dueKey(t)<today;const st=/block/i.test(t.status)?'bad':/progress/i.test(t.status)?'wait':/^dropped$/i.test(t.status.trim())?'':isDone(t)?'ok':'';
     return `<div class="hrow task ${over?'over':''} ${isDone(t)?'done':''}" data-row="${t.row}"><div class="m"><div class="t">${esc(t.title)}</div>
     <div class="d">${esc(t.owner||'No owner')}${t.due?' · '+(over?'Overdue · ':'')+esc(t.due):''}${t.function?' · '+esc(t.function):''}</div></div><span class="pill ${st}">${esc(t.status||'—')}</span></div>`;};
   const over=open.filter(t=>dueKey(t)<today);const rest=open.filter(t=>dueKey(t)>=today);
   $('bList').innerHTML=(over.length?`<div class="sec">Overdue · ${over.length}</div>`+over.map(row).join(''):'')+
     `<div class="sec">Open · ${rest.length}</div>`+(rest.map(row).join('')||'<div class="empty">No open tasks.</div>')+
-    (done.length?`<div class="sec"><button class="link" id="bDone">Done · ${done.length} (show)</button></div><div id="bDoneList" class="hide">${done.map(row).join('')}</div>`:'');
+    (done.length?`<div class="sec"><button class="link" id="bDone">Done or dropped · ${done.length} (show)</button></div><div id="bDoneList" class="hide">${done.map(row).join('')}</div>`:'');
   if($('bDone'))$('bDone').onclick=()=>$('bDoneList').classList.toggle('hide');}
 $('bFilters').onclick=e=>{const g=e.target.dataset.b;if(g){BFILTER=g;renderBoard();}};
 $('bList').onclick=e=>{const r=e.target.closest('[data-row]');if(!r)return;const t=BOARD.tasks.find(x=>x.row===+r.dataset.row);if(!t)return;
@@ -473,10 +477,10 @@ $('iRefresh').onclick=loadIdeas;
 
 /* ---------- Me: weekly report (both) and OpenAI cost (Youssef) ---------- */
 function reportBanner(){const r=ME&&ME.report;
-  $('rBanner').innerHTML=r&&r.due?`<div class="banner"><b>Weekly report not sent</b> (${esc(r.week)}). Three short lines: moved, blocked, needs decision.
+  $('rBanner').innerHTML=r&&r.due?`<div class="banner"><b>Weekly report not sent</b> (week of ${esc(r.week)}). Three short lines: moved, blocked, needs decision.
     <div class="row"><button class="btn small" id="rbGo">Write it now</button></div></div>`:'';
   if($('rbGo'))$('rbGo').onclick=openReport;}
-const repHTML=r=>`<div class="rep"><div class="h">${esc(r.week)} · ${esc(r.owner)}</div>
+const repHTML=r=>`<div class="rep"><div class="h">${/^\d{4}-\d{2}-\d{2}$/.test(r.week)?'Week of ':''}${esc(r.week)} · ${esc(r.owner)}</div>
   <p dir="auto"><b>Moved:</b> ${esc(r.moved||'—')}</p><p dir="auto"><b>Blocked:</b> ${esc(r.blocked||'—')}</p><p dir="auto"><b>Needs decision:</b> ${esc(r.decision||'—')}</p></div>`;
 const usd=n=>'$'+(+n||0).toFixed(n>=1?2:3);
 function costHTML(r){if(!r.months.length)return '<div class="who">No cost yet. It starts with the next sorted capture.</div>';
@@ -498,7 +502,7 @@ async function openReport(){
   openSheet(`<h2>Weekly report</h2><div class="sub">Three short lines: what moved, what is blocked, what needs a decision.</div><div id="rpBody" class="who">Loading…</div>`);
   let r;try{r=await call('report_draft',{},90000);}catch(e){const el=$('rpBody');if(el)el.textContent=e.message;return;}
   const el=$('rpBody');if(!el)return;const v=r.sent||r.draft;
-  el.outerHTML=`<div><div class="sub">Week ${esc(r.week)}${r.sent?' · sent. You can change it and send again.':''}</div>
+  el.outerHTML=`<div><div class="sub">Week of ${esc(r.week)}${r.sent?' · sent. You can change it and send again.':''}</div>
     <div class="lbl">Moved</div><textarea id="rpM" dir="auto">${esc(v.moved)}</textarea>
     <div class="lbl">Blocked</div><textarea id="rpB" dir="auto">${esc(v.blocked)}</textarea>
     <div class="lbl">Needs decision</div><textarea id="rpD" dir="auto">${esc(v.decision)}</textarea>

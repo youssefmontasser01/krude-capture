@@ -30,7 +30,8 @@ CLAUDE.md               this file
 - Index: `_index.json` in `_Capture State` holds the latest 400 captures (copy of the cap files). History, Ideas, the trigger and the report read only this file. Every non-quiet `saveCap_` updates it (inside the lock). If a write fails, `INDEX_STALE` is set and the next read rebuilds it. Manual fix: run `rebuildIndex`.
 - Cost: each capture stores `cost` {usd, audio_secs, calls}. Month totals are in Script Property `COST_LEDGER`. Prices are estimates in `CFG.PRICES`; update them if OpenAI prices change.
 - Ideas: items with kind `idea`. The owner (or Youssef) can put one on the shared jam list; either founder can mark it discussed. Ahmad sees Youssef's ideas only when they are on the jam list (summary and notes only).
-- Weekly report: moved / blocked / needs decision, ISO week, Cairo time. Due from Thursday; Ahmad sees a banner until it is sent. The draft is filled from `_board_log.json` (status changes made in the app), Blocked tasks and his items that wait for Youssef. Stored in `_reports.json` and appended to "21 - Weekly Reports" (`REPORTS_DOC_ID`).
+- Weekly report: moved / blocked / needs decision. KRUDE weeks start on Sunday and are named by that date (same as the Board Week column), Cairo time. Due from Thursday until the Sunday 10:00 stand-up; Ahmad sees a banner until it is sent. The draft is filled from `_board_log.json` (status changes made in the app), Blocked tasks and his items that wait for Youssef. Stored in `_reports.json` and appended to "21 - Weekly Reports" (`REPORTS_DOC_ID`).
+- Board rules in the app (from 07 / 00 - ChatGPT Project Instructions): a status change to Done writes the Done date (reopen clears it); Dropped counts as closed. New tasks from Capture get Product, Function (fixed list `FUNCTIONS`), Week (Sunday of the due date, else this week) and a "Check: no owner / due date" note when one is missing.
 - Phone safety: recordings are written to IndexedDB every second; the outbox keeps a capture until the server confirms it. Do not weaken this.
 
 ## Secrets (never in code, never in git)
@@ -59,6 +60,12 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
    Always use `-i <DEPLOYMENT_ID>` so the `/exec` URL stays the same. Never create a new deployment.
    DEPLOYMENT_ID: `AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA`
 6. Tell Youssef in 2–4 short lines what changed and what to test on the phone. If the backend changed, say if a new function must be run once.
+
+## Open decisions (Youssef, at the Kickoff)
+
+- D1: Ahmad sees all Board tasks in the app (decision 12 Nov: he gets his tasks after the stand-up). Keep / own tasks only / hide.
+- D2: Status changes in the app write at once, without the Crude Today preview. Keep / make the Board tab read-only.
+- D3: Ahmad can approve his own simple tasks straight to the Board. Keep / send to the Inbox for Sunday sorting.
 
 ## Open items
 

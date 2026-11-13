@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.0;
+const VERSION=3.1;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -22,7 +22,9 @@ const CFG = Object.freeze({
 });
 const DESTS=['board_task','supplier','inventory_change','decision_log_candidate','fill_backlog','handbook_note','inbox_only'];
 const KINDS=['task','supplier_contact','issue','purchase','price','idea','note','decision_candidate'];
-const FIELD_NAMES=['title','owner','due_date','function','name','phone','sells','price','place','notes'];
+const FIELD_NAMES=['title','product','owner','due_date','function','name','phone','sells','price','place','notes'];
+// Board Function names (Decision Log / 00 - ChatGPT Project Instructions). Empty = not known.
+const FUNCTIONS=['Design','Product Development','Production','Commercial','Fulfilment','Fulfilment - Website','Finance','Legal and Admin','Leadership','Capture'];
 const HINTS=['','Note','Idea','Task','Issue'];
 
 /* ---------- basics (same as v1) ---------- */
@@ -234,10 +236,10 @@ function context_(){
   const pick=(t,names)=>{const idx=t.headers.map((h,i)=>names.includes(norm_(h))?i:-1).filter(i=>i>=0);
     return {headers:idx.map(i=>t.headers[i]),rows:t.rows.map(r=>idx.map(i=>r[i]))};};
   const board=table_(CFG.BOARD_SHEET_ID,'Tasks'),sup=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
-  return {board_tasks:pick(board,['task','task name','title','name','owner','status','function','due','due date']),
+  return {board_tasks:pick(board,['task','task name','title','name','product','owner','status','function','due','due date','week']),
           suppliers:pick(sup,['name','sells','place'])};
 }
-function schema_(){const fp={};FIELD_NAMES.forEach(k=>fp[k]={type:'string'});
+function schema_(){const fp={};FIELD_NAMES.forEach(k=>fp[k]={type:'string'});fp.function={type:'string',enum:FUNCTIONS.concat([''])};
   const obj={entry_id:{type:'string'},kind:{type:'string',enum:KINDS},summary:{type:'string'},destination:{type:'string',enum:DESTS},
     fields:{type:'object',properties:fp,required:FIELD_NAMES,additionalProperties:false},needs_youssef:{type:'boolean'},reason:{type:'string'},
     operation:{type:'string',enum:['create','update']},existing_record:{type:'string'},
@@ -250,6 +252,7 @@ function sortItems_(c){
     'Do not invent names, dates, numbers or prices. Unclear items become note/inbox_only with a reason. '+
     'Set needs_youssef and sensitive_topics for money, prices, roles, strategy and operating changes. Decisions are decision_candidate only. '+
     'Existing records require operation update and an exact record reference. Missing fields must be empty strings. Never invent a record match. '+
+    'Board tasks: product only if the capture names a KRUDE product; function from the fixed list or empty; owner and due_date only if said, never guessed. '+
     'Use entry_id "'+c.id+'" for every item. Photos are attached as links only; do not describe them.\nRules:\n'+rules;
   const capture={entry_id:c.id,from:c.owner,date:date_(),type_hint:c.hint,typed_text:c.text,voice_text:c.transcript,photo_links:c.photos.map(p=>p.url)};
   const model=props_().getProperty('SORT_MODEL')||CFG.SORT_MODEL;
@@ -271,7 +274,9 @@ function sensitive_(x){return x.needs_youssef===true||['purchase','price','decis
 function validateItem_(x,cid){need_(x&&typeof x==='object','Invalid item.');x.entry_id=cid;
   need_(KINDS.includes(x.kind)&&DESTS.includes(x.destination),'Invalid item.');short_(x.summary,1000);short_(x.reason,2000);
   need_(['create','update'].includes(x.operation),'Invalid operation.');short_(x.existing_record,1000);
-  need_(x.fields&&Array.isArray(x.sensitive_topics),'Invalid fields.');FIELD_NAMES.forEach(k=>short_(x.fields[k],4000));
+  need_(x.fields&&typeof x.fields==='object'&&Array.isArray(x.sensitive_topics),'Invalid fields.');
+  FIELD_NAMES.forEach(k=>{if(x.fields[k]==null)x.fields[k]='';short_(x.fields[k],4000);});
+  if(x.fields.function&&!FUNCTIONS.includes(x.fields.function)){const f=FUNCTIONS.find(n=>norm_(n)===norm_(x.fields.function));x.fields.function=f||'';}
   if(x.kind==='decision_candidate')x.destination='decision_log_candidate';
   if(x.destination==='board_task')need_(x.fields.title.trim(),'Task needs a title.');
   if(x.destination==='supplier')need_(x.fields.name.trim(),'Supplier needs a name.');
@@ -296,10 +301,14 @@ function isDuplicate_(t,value,aliases){const col=t.headers.findIndex(h=>aliases.
 function route_(x){return x.operation==='update'||x.existing_record||!['board_task','supplier','inbox_only'].includes(x.destination)?'handoff':x.destination;}
 function append_(c,x){const marker='[capture-item:'+x.id+']';let dest=route_(x);
  if(dest==='inbox_only')return 'Kept in Inbox';
- if(dest==='board_task'){const t=table_(CFG.BOARD_SHEET_ID,'Tasks');const A={title:['task','task name','title','name'],owner:['owner','assigned to','assignee'],due_date:['due','due date','deadline'],function:['function','team'],status:['status'],notes:['notes','note','description','source']};
+ if(dest==='board_task'){const t=table_(CFG.BOARD_SHEET_ID,'Tasks');const A={title:['task','task name','title','name'],product:['product'],owner:['owner','assigned to','assignee'],due_date:['due','due date','deadline'],function:['function','team'],week:['week'],status:['status'],notes:['notes','note','description','source']};
    if(isDuplicate_(t,x.fields.title,A.title)){x.operation='update';x.existing_record='Exact task title: '+x.fields.title;dest='handoff';}
    else{need_(t.headers.some(h=>A.status.includes(norm_(h))),'Tasks needs a Status column.');
-     const v=Object.assign({},x.fields,{status:'To do',notes:(x.fields.notes||'')+' Capture '+date_()+' '+c.owner+' '+marker});
+     // Week = the Sunday of the due date's week (KRUDE weeks start on Sunday); no due date = this week.
+     const due=/^\d{4}-\d{2}-\d{2}$/.test(x.fields.due_date)?x.fields.due_date:'';
+     const miss=[x.fields.owner?'':'owner',due?'':'due date'].filter(Boolean);
+     const v=Object.assign({},x.fields,{due_date:due||x.fields.due_date,week:sunday_(due?new Date(due+'T12:00:00Z'):new Date()),status:'To do',
+       notes:((miss.length?'Check: no '+miss.join(', ')+'. ':'')+(x.fields.notes||'')+' Capture '+date_()+' '+c.owner+' '+marker).trim()});
      t.sheet.appendRow(t.headers.map(h=>{const k=Object.keys(A).find(k=>A[k].includes(norm_(h)));return cleanCell_(k?v[k]:'');}));SpreadsheetApp.flush();return 'Saved to Board Tasks';}}
  if(dest==='supplier'){const t=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
    if(isDuplicate_(t,x.fields.name,['name'])){x.operation='update';x.existing_record='Exact supplier name: '+x.fields.name;dest='handoff';}
@@ -369,15 +378,17 @@ function jam_(r,u){const op=String(r.op||'');need_(['add','remove','discussed','
   return ideas_(u);}
 
 /* ---------- 4c. weekly report: moved / blocked / needs decision ---------- */
-// Weeks are ISO weeks (Monday to Sunday), Cairo time. The report is due from Thursday.
-function week_(d){const s=Utilities.formatDate(d||new Date(),CFG.TZ,'yyyy-MM-dd'),t=new Date(s+'T00:00:00Z');
-  t.setUTCDate(t.getUTCDate()-((t.getUTCDay()+6)%7)+3);const y=t.getUTCFullYear(),w1=new Date(Date.UTC(y,0,4));
-  return y+'-W'+String(1+Math.round(((t-w1)/86400000-3+((w1.getUTCDay()+6)%7))/7)).padStart(2,'0');}
+// KRUDE weeks start on Sunday (Board "Week" column), Cairo time. A week is named by its Sunday date.
+// The report for a week is due from its Thursday until the Sunday 10:00 stand-up that starts the next week.
+function sunday_(d){const s=Utilities.formatDate(d||new Date(),CFG.TZ,'yyyy-MM-dd'),t=new Date(s+'T00:00:00Z');
+  t.setUTCDate(t.getUTCDate()-t.getUTCDay());return t.toISOString().slice(0,10);}
+function week_(d){return sunday_(d);}
 function reports_all_(){return jread_('_reports.json',[]);}
-// Which week to write now: this week from Thursday; on Monday to Wednesday, last week if it was not sent.
+// Which week to write now: Thursday to Saturday = this week. Sunday = last week (before the stand-up).
+// Monday to Wednesday = last week if it was not sent (late), else this week (not due yet).
 function reportState_(u){const reps=reports_all_(),has=w=>reps.some(r=>r.week===w&&r.owner===u.name);
-  const day=Number(Utilities.formatDate(new Date(),CFG.TZ,'u')),cur=week_(),prev=week_(new Date(Date.now()-7*86400000));
-  const week=day>=4||has(prev)?cur:prev;return {week:week,due:!u.admin&&!has(week)&&(week===prev||day>=4)};}
+  const day=Number(Utilities.formatDate(new Date(),CFG.TZ,'u'))%7,cur=week_(),prev=week_(new Date(Date.now()-7*86400000));
+  const week=day>=4?cur:day===0?prev:(has(prev)?cur:prev);return {week:week,due:!u.admin&&!has(week)&&(week===prev||day>=4)};}
 function reportDraft_(u){const st=reportState_(u),reps=reports_all_(),sent=reps.find(r=>r.week===st.week&&r.owner===u.name)||null;
   const since=new Date(Date.now()-7*86400000).toISOString(),me=norm_(u.name);
   let tasks=[];try{tasks=board_().tasks;}catch(e){console.error('report board: '+e);}
@@ -400,14 +411,18 @@ function reportSend_(r,u){const t={moved:short_(String(r.moved||'').trim(),1500)
   return {report:rep,state:reportState_(u)};}
 function reportDoc_(x,again){const id=props_().getProperty('REPORTS_DOC_ID');if(!id){console.warn('No REPORTS_DOC_ID. Run setupV3.');return;}
   const d=DocumentApp.openById(id),b=d.getBody();
-  b.appendParagraph(x.week+' · '+x.owner+(again?' (updated)':'')).setHeading(DocumentApp.ParagraphHeading.HEADING3);
+  b.appendParagraph('Week of '+x.week+' · '+x.owner+(again?' (updated)':'')).setHeading(DocumentApp.ParagraphHeading.HEADING3);
   [['Moved',x.moved],['Blocked',x.blocked],['Needs decision',x.decision]].forEach(([k,v])=>b.appendParagraph(k+': '+(v||'—')));
   d.saveAndClose();}
 function reports_(u){return {reports:reports_all_().filter(r=>u.admin||r.owner===u.name).sort((a,b)=>b.week.localeCompare(a.week)||a.owner.localeCompare(b.owner)).slice(0,12)};}
 
 /* ---------- 5. Board tab: live read of Board Tasks, status change only ---------- */
 const TASK_COLS={title:['task','task name','title','name'],owner:['owner','assigned to','assignee'],due:['due','due date','deadline'],status:['status'],
-  function:['function','team'],notes:['notes','note','description'],updated:['last updated','updated','last update']};
+  function:['function','team'],notes:['notes','note','description'],updated:['last updated','updated','last update'],done:['done date','date done','completed'],
+  product:['product'],week:['week']};
+// Closed = finished or dropped. Closed tasks do not show as open or overdue.
+const isClosed_=st=>/^(done|complete|completed|finished|dropped|cancelled|canceled)$/i.test(String(st||'').trim());
+const isDoneSt_=st=>/^(done|complete|completed|finished)$/i.test(String(st||'').trim());
 function taskSheet_(){const s=SpreadsheetApp.openById(CFG.BOARD_SHEET_ID).getSheetByName('Tasks');need_(s,'The Board has no Tasks tab.');return s;}
 function taskMap_(headers){const m={};Object.keys(TASK_COLS).forEach(k=>m[k]=headers.findIndex(h=>TASK_COLS[k].includes(norm_(h))));
   need_(m.title>=0&&m.status>=0,'Board Tasks needs a Task column and a Status column.');return m;}
@@ -418,7 +433,8 @@ function statuses_(s,m,values){
 function board_(){const s=taskSheet_(),n=s.getLastRow(),w=s.getLastColumn();
   const vals=s.getRange(1,1,Math.max(n,1),w).getDisplayValues(),m=taskMap_(vals[0]),cell=(r,k)=>m[k]>=0?String(r[m[k]]):'';
   const tasks=[];for(let i=1;i<vals.length;i++){const r=vals[i];if(!cell(r,'title').trim())continue;
-    tasks.push({row:i+1,title:cell(r,'title'),owner:cell(r,'owner'),due:cell(r,'due'),status:cell(r,'status'),function:cell(r,'function'),notes:cell(r,'notes').slice(0,600)});}
+    tasks.push({row:i+1,title:cell(r,'title'),product:cell(r,'product'),owner:cell(r,'owner'),due:cell(r,'due'),status:cell(r,'status'),done_date:cell(r,'done'),
+      function:cell(r,'function'),week:cell(r,'week'),notes:cell(r,'notes').slice(0,600)});}
   return {tasks:tasks,statuses:statuses_(s,m,tasks.map(t=>t.status)),today:date_()};}
 function setStatus_(r,u){short_(r.title,500);short_(r.status,60);need_(Number.isInteger(r.row)&&r.row>=2,'Invalid row.');
   return lock_(()=>{const s=taskSheet_(),w=s.getLastColumn(),m=taskMap_(s.getRange(1,1,1,w).getDisplayValues()[0]);
@@ -427,6 +443,9 @@ function setStatus_(r,u){short_(r.title,500);short_(r.status,60);need_(Number.is
     if(!task||task.title!==r.title){const same=all.tasks.filter(t=>t.title===r.title);need_(same.length===1,'The Board changed. Pull down to refresh.');task=same[0];row=task.row;}
     s.getRange(row,m.status+1).setValue(r.status);
     if(m.updated>=0)s.getRange(row,m.updated+1).setValue(date_());
+    // Board rule: Done tasks keep a Done date. Reopened tasks lose it.
+    if(m.done>=0){if(isDoneSt_(r.status)&&!isDoneSt_(task.status))s.getRange(row,m.done+1).setValue(date_());
+      else if(!isDoneSt_(r.status)&&isDoneSt_(task.status))s.getRange(row,m.done+1).setValue('');}
     SpreadsheetApp.flush();console.log('Board status: row '+row+' "'+r.title+'" -> '+r.status+' by '+u.name);
     // Log for the weekly report ("moved"). Only changes made in the app are logged.
     try{let L=[];try{L=jread_('_board_log.json',[]);}catch(e){console.error('board log was not valid. Starting again.');}
