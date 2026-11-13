@@ -91,12 +91,18 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .task.done .t{color:var(--mute);text-decoration:line-through}
 .detail p{margin:6px 0;unicode-bidi:plaintext}
 .detail a{color:var(--ink)}
+.whoBtn{background:none;border:none;font:inherit;font-size:13px;color:var(--mute);padding:4px 0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.rep{border-top:1px solid var(--line);padding:10px 0;font-size:14px}
+.rep p{margin:3px 0;unicode-bidi:plaintext}
+.rep .h,.cost .h{font-size:12px;color:var(--mute)}
+.cost{font-size:14px;padding:6px 0;border-bottom:1px solid var(--line)}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header><div class="brand">KRUDE</div><div class="who" id="who"></div></header>
+  <header><div class="brand">KRUDE</div><button class="whoBtn" id="who" aria-label="Reports and costs"></button></header>
   <div id="banners"></div>
+  <div id="rBanner"></div>
 
   <!-- SETUP -->
   <section id="vSetup" class="hide">
@@ -148,6 +154,12 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
     <div style="text-align:center"><button class="link" id="refresh">Refresh</button></div>
   </section>
 
+  <!-- IDEAS -->
+  <section id="vIdeas" class="hide">
+    <div id="iList"></div>
+    <div style="text-align:center"><button class="link" id="iRefresh">Refresh</button></div>
+  </section>
+
   <!-- BOARD -->
   <section id="vBoard" class="hide">
     <div class="row" id="bFilters" style="margin-bottom:12px"></div>
@@ -159,6 +171,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 <nav id="nav" class="hide">
   <button id="tCap" class="on">Capture</button>
   <button id="tItems">History<span class="n hide" id="badge"></span></button>
+  <button id="tIdeas">Ideas</button>
   <button id="tBoard">Board</button>
 </nav>
 
@@ -253,7 +266,7 @@ async function save(review){
   if(rec)await stopRec();
   const id=uuid(),text=$('txt').value.trim();
   const item={id,created:new Date().toISOString(),text,hint:draft.hint,review,state:'phone',err:'',
-    audio:draft.audio?{buf:await draft.audio.arrayBuffer(),mime:baseMime(draft.mime)}:null,
+    audio:draft.audio?{buf:await draft.audio.arrayBuffer(),mime:baseMime(draft.mime),secs:Math.round(draft.secs||0)}:null,
     photos:await Promise.all(draft.photos.map(b=>b.arrayBuffer()))};
   try{await DB.put('outbox',item);}catch(e){return toast('Not saved: phone storage is full. Free space and try again.');}
   if(draft.recId)await dropRec(draft.recId);
@@ -272,7 +285,7 @@ async function send(id){
   try{const it=await DB.get('outbox',id);if(!it)return true;if(it.state==='sent')return true;
     step('up');
     const res=await call('upload',{capture_id:id,text:it.text,hint:it.hint,local_time:new Date(it.created).toString().slice(0,80),
-      audio:it.audio?{mime:it.audio.mime,data:b64(it.audio.buf)}:null,photos:it.photos.map(b=>({data:b64(b)}))},180000);
+      audio:it.audio?{mime:it.audio.mime,secs:it.audio.secs||0,data:b64(it.audio.buf)}:null,photos:it.photos.map(b=>({data:b64(b)}))},180000);
     await DB.put('outbox',{id,created:it.created,text:it.text,hint:it.hint,review:it.review,state:'sent',sentAt:Date.now(),audio:null,photos:[]});
     upsert(res.capture);updateStrip();return true;}
   catch(e){const it=await DB.get('outbox',id);if(it){it.err=e.message;await DB.put('outbox',it);}updateStrip();
@@ -376,6 +389,7 @@ function openDetail(cid,iid){const c=CAPS.find(x=>x.id===cid);if(!c)return;const
   const f=x?Object.entries(x.fields||{}).filter(([k,v])=>v&&k!=='notes'):[];
   openSheet(`<div class="detail"><h2>${x?esc(KIND[x.kind]||x.kind):'Capture'}</h2><div class="sub">${fmtTime(c.created)} · ${esc(c.owner)}</div>
     ${x?`<p dir="auto"><b>${esc(x.summary)}</b></p>${f.map(([k,v])=>`<p>${esc(k.replace('_',' '))}: ${esc(v)}</p>`).join('')}<p>${statusPill(x)} ${x.destination?esc(DEST[x.destination]||''):''}</p>`:`<p>${capPill(c)}</p>${c.error?`<p class="who">${esc(c.error)}</p>`:''}`}
+    ${ME.admin&&c.cost!=null?`<p class="who">OpenAI cost (estimate): $${(+c.cost).toFixed(4)}</p>`:''}
     <div class="lbl">What was said</div><p dir="auto">${esc(words(c)||'—')}</p>
     ${c.photos.length?`<div class="lbl">Photos</div>${c.photos.map((u,i)=>`<p><a href="${esc(u)}" target="_blank">Photo ${i+1}</a></p>`).join('')}`:''}
     <div class="row" style="margin-top:14px">${needsMe(c)?`<button class="btn small" id="dRev">Review</button>`:''}
@@ -425,17 +439,88 @@ $('bList').onclick=e=>{const r=e.target.closest('[data-row]');if(!r)return;const
     catch(err){toast(err.message);closeSheet();loadBoard();}});};
 $('bRefresh').onclick=loadBoard;
 
+/* ---------- Ideas: my ideas + the shared jam list ---------- */
+let IDEAS=null;
+try{IDEAS=JSON.parse(LS.get('krude_ideas')||'null')}catch(e){}
+async function loadIdeas(){try{IDEAS=await call('ideas',{},60000);LS.set('krude_ideas',JSON.stringify(IDEAS));renderIdeas();}
+  catch(e){toast('Ideas: '+e.message);}}
+function ideaRow(x,showPill){const who=x.owner!==ME.name?' · '+esc(x.owner):'';
+  const pill=!showPill||!x.jam?'':x.jam.state==='discussed'?'<span class="pill ok">Discussed</span>':'<span class="pill wait">Jam list</span>';
+  return `<div class="hrow" data-idea="${esc(x.cid)}|${esc(x.iid)}"><div class="m"><div class="t">${esc(x.summary)}</div><div class="d">${fmtTime(x.created)}${who}</div></div>${pill}</div>`;}
+function renderIdeas(){if(!ME)return;if(!IDEAS){$('iList').innerHTML='<div class="empty">Loading…</div>';return;}
+  const open=IDEAS.jam.filter(x=>x.jam.state==='open'),disc=IDEAS.jam.filter(x=>x.jam.state==='discussed');
+  $('iList').innerHTML=`<div class="sec" style="margin-top:0">Jam list · ${open.length}</div>`+
+    (open.map(x=>ideaRow(x,false)).join('')||'<div class="empty">No ideas on the jam list. Open one of your ideas and tap "Add to jam list".</div>')+
+    (disc.length?`<div class="sec"><button class="link" id="iDisc">Discussed · ${disc.length} (show)</button></div><div id="iDiscList" class="hide">${disc.map(x=>ideaRow(x,false)).join('')}</div>`:'')+
+    `<div class="sec">${ME.admin?'All ideas':'My ideas'} · ${IDEAS.mine.length}</div>`+
+    (IDEAS.mine.map(x=>ideaRow(x,true)).join('')||'<div class="empty">No ideas yet. Record one in Capture.</div>');
+  if($('iDisc'))$('iDisc').onclick=()=>$('iDiscList').classList.toggle('hide');}
+$('iList').onclick=e=>{const r=e.target.closest('[data-idea]');if(!r||!IDEAS)return;const [cid,iid]=r.dataset.idea.split('|');
+  const x=IDEAS.mine.concat(IDEAS.jam).find(i=>i.cid===cid&&i.iid===iid);if(!x)return;
+  const b=[];
+  if(x.jam&&x.jam.state==='open')b.push(['discussed','Mark discussed','']);
+  if(x.jam&&x.jam.state==='discussed')b.push(['open','Back to jam list','ghost']);
+  if(x.can_edit)b.push(x.jam?['remove','Remove from jam list','ghost']:['add','Add to jam list','']);
+  const by=x.jam?`<p class="who">On the jam list (added by ${esc(x.jam.by)})${x.jam.state==='discussed'?' · discussed'+(x.jam.discussed_by?' by '+esc(x.jam.discussed_by):''):''}</p>`:'';
+  openSheet(`<div class="detail"><h2>Idea</h2><div class="sub">${fmtTime(x.created)} · ${esc(x.owner)}</div>
+    <p dir="auto"><b>${esc(x.summary)}</b></p>${x.notes?`<p dir="auto">${esc(x.notes)}</p>`:''}${by}
+    <div class="row" style="margin-top:14px">${b.map(([op,l,c])=>`<button class="btn small ${c}" data-op="${op}">${l}</button>`).join('')}<button class="btn small ghost" id="iClose">Close</button></div></div>`);
+  $('iClose').onclick=closeSheet;
+  $('sheetIn').querySelectorAll('[data-op]').forEach(btn=>btn.onclick=async()=>{$('sheetIn').querySelectorAll('[data-op]').forEach(z=>z.disabled=true);btn.textContent='Saving…';
+    try{IDEAS=await call('jam',{capture_id:cid,item_id:iid,op:btn.dataset.op},60000);LS.set('krude_ideas',JSON.stringify(IDEAS));closeSheet();renderIdeas();toast('Done.');}
+    catch(err){toast(err.message);closeSheet();}});};
+$('iRefresh').onclick=loadIdeas;
+
+/* ---------- Me: weekly report (both) and OpenAI cost (Youssef) ---------- */
+function reportBanner(){const r=ME&&ME.report;
+  $('rBanner').innerHTML=r&&r.due?`<div class="banner"><b>Weekly report not sent</b> (${esc(r.week)}). Three short lines: moved, blocked, needs decision.
+    <div class="row"><button class="btn small" id="rbGo">Write it now</button></div></div>`:'';
+  if($('rbGo'))$('rbGo').onclick=openReport;}
+const repHTML=r=>`<div class="rep"><div class="h">${esc(r.week)} · ${esc(r.owner)}</div>
+  <p dir="auto"><b>Moved:</b> ${esc(r.moved||'—')}</p><p dir="auto"><b>Blocked:</b> ${esc(r.blocked||'—')}</p><p dir="auto"><b>Needs decision:</b> ${esc(r.decision||'—')}</p></div>`;
+const usd=n=>'$'+(+n||0).toFixed(n>=1?2:3);
+function costHTML(r){if(!r.months.length)return '<div class="who">No cost yet. It starts with the next sorted capture.</div>';
+  return r.months.slice(0,6).map(m=>`<div class="cost"><b>${esc(m.month)}: ${usd(m.usd)}</b>
+    <div class="h">${m.captures} capture${m.captures===1?'':'s'} sorted · ${usd(m.usd/Math.max(1,m.captures))} per capture · ${Math.round(m.audio_secs/60)} min voice</div></div>`).join('')+
+    '<p class="who">Estimate from the prices in the code. The real bill is on the OpenAI usage page.</p>';}
+$('who').onclick=openMe;
+function openMe(){if(!ME)return;
+  openSheet(`<div class="detail"><h2>${esc(ME.name)}</h2><div class="sub">${ME.admin?'Co-founder · Product':'Co-founder · Market'}</div>
+    <button class="btn" id="mReport">Write weekly report</button>
+    ${ME.admin?'<div class="lbl">OpenAI cost per month</div><div id="mCost" class="who">Loading…</div>':''}
+    <div class="lbl">${ME.admin?'Weekly reports':'My weekly reports'}</div><div id="mReps" class="who">Loading…</div>
+    <div class="row" style="margin-top:14px"><button class="btn small ghost" id="mClose">Close</button></div></div>`);
+  $('mClose').onclick=closeSheet;$('mReport').onclick=openReport;
+  const put=(id,html)=>{const el=$(id);if(el){el.className='';el.innerHTML=html;}};
+  call('reports',{},60000).then(r=>put('mReps',r.reports.length?r.reports.map(repHTML).join(''):'<div class="who">No reports yet.</div>')).catch(e=>put('mReps',`<div class="who">${esc(e.message)}</div>`));
+  if(ME.admin)call('costs',{},60000).then(r=>put('mCost',costHTML(r))).catch(e=>put('mCost',`<div class="who">${esc(e.message)}</div>`));}
+async function openReport(){
+  openSheet(`<h2>Weekly report</h2><div class="sub">Three short lines: what moved, what is blocked, what needs a decision.</div><div id="rpBody" class="who">Loading…</div>`);
+  let r;try{r=await call('report_draft',{},90000);}catch(e){const el=$('rpBody');if(el)el.textContent=e.message;return;}
+  const el=$('rpBody');if(!el)return;const v=r.sent||r.draft;
+  el.outerHTML=`<div><div class="sub">Week ${esc(r.week)}${r.sent?' · sent. You can change it and send again.':''}</div>
+    <div class="lbl">Moved</div><textarea id="rpM" dir="auto">${esc(v.moved)}</textarea>
+    <div class="lbl">Blocked</div><textarea id="rpB" dir="auto">${esc(v.blocked)}</textarea>
+    <div class="lbl">Needs decision</div><textarea id="rpD" dir="auto">${esc(v.decision)}</textarea>
+    ${r.sent?'':'<p class="who">Filled from the Board and your captures. Edit it before you send.</p>'}
+    <div class="btns"><button class="btn ghost" id="rpX">Later</button><button class="btn" id="rpS">${r.sent?'Send again':'Send'}</button></div></div>`;
+  $('rpX').onclick=closeSheet;
+  $('rpS').onclick=async()=>{const b=$('rpS');b.disabled=true;b.textContent='Sending…';
+    try{const res=await call('report_send',{week:r.week,moved:$('rpM').value,blocked:$('rpB').value,decision:$('rpD').value},90000);
+      ME.report=res.state;LS.set('krude_me',JSON.stringify(ME));reportBanner();closeSheet();toast('Report sent.');}
+    catch(e){b.disabled=false;b.textContent='Send';toast(e.message);}};}
+
 /* ---------- shell ---------- */
 function openSheet(html){$('sheetIn').innerHTML=html;$('sheet').classList.add('on');}
 function closeSheet(){$('sheet').classList.remove('on');clearInterval(progressT);}
 $('sheet').onclick=e=>{if(e.target===$('sheet'))closeSheet();};
 let toastT;function toast(msg){let el=$('toast');if(!el){el=document.createElement('div');el.id='toast';el.style.cssText='position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1d1b18;color:#f4f1ec;padding:10px 16px;border-radius:10px;font-size:14px;z-index:20;max-width:90vw;text-align:center';document.body.appendChild(el);}
   el.textContent=msg;el.style.display='block';clearTimeout(toastT);toastT=setTimeout(()=>el.style.display='none',3500);}
-function tab(name){$('vCap').classList.toggle('hide',name!=='cap');$('vHist').classList.toggle('hide',name!=='items');$('vBoard').classList.toggle('hide',name!=='board');
-  $('tCap').classList.toggle('on',name==='cap');$('tItems').classList.toggle('on',name==='items');$('tBoard').classList.toggle('on',name==='board');
-  if(name==='items'){renderList();loadList();}if(name==='board'){renderBoard();loadBoard();}}
-$('tCap').onclick=()=>tab('cap');$('tItems').onclick=()=>tab('items');$('tBoard').onclick=()=>tab('board');
-function needSetup(msg){['vCap','vHist','vBoard','nav'].forEach(i=>$(i).classList.add('hide'));$('vSetup').classList.remove('hide');
+const TABS={cap:['vCap','tCap'],items:['vHist','tItems'],ideas:['vIdeas','tIdeas'],board:['vBoard','tBoard']};
+function tab(name){Object.entries(TABS).forEach(([k,[v,t]])=>{$(v).classList.toggle('hide',k!==name);$(t).classList.toggle('on',k===name);});
+  if(name==='items'){renderList();loadList();}if(name==='ideas'){renderIdeas();loadIdeas();}if(name==='board'){renderBoard();loadBoard();}}
+Object.entries(TABS).forEach(([k,[,t]])=>$(t).onclick=()=>tab(k));
+function needSetup(msg){['vCap','vHist','vIdeas','vBoard','nav'].forEach(i=>$(i).classList.add('hide'));$('vSetup').classList.remove('hide');
   $('setApiWrap').classList.toggle('hide',!!API_URL);$('setKey').value='';if(msg)$('banners').innerHTML=`<div class="banner err">${esc(msg)}</div>`;}
 $('setGo').onclick=async()=>{const k=$('setKey').value.trim();if(k)LS.set('krude_key',k);const a=$('setApi').value.trim();if(a)LS.set('krude_api',a);start();};
 
@@ -455,7 +540,7 @@ async function start(){
   try{const r=await call('identity',{},30000);ME=r.user;LS.set('krude_me',JSON.stringify(ME));}
   catch(e){if(/wrong key/i.test(e.message))return needSetup('This link key does not work. Ask Youssef for a new link.');
     ME=JSON.parse(LS.get('krude_me')||'null');if(!ME)return needSetup(e.message);toast('Offline. You can still record.');}
-  $('who').textContent=ME.name;['vCap','nav'].forEach(i=>$(i).classList.remove('hide'));tab('cap');
+  $('who').textContent=ME.name;reportBanner();['vCap','nav'].forEach(i=>$(i).classList.remove('hide'));tab('cap');
   renderHints();renderThumbs();canSave();updateStrip();recover();flush();
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 }

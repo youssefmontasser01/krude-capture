@@ -1,7 +1,8 @@
 # KRUDE Capture
 
 Phone web app for the two KRUDE co-founders: Youssef (Co-founder · Product, admin) and Ahmad (Co-founder · Market).
-Three tabs: **Capture** (voice/text/photo in), **History** (every captured item, search + filters), **Board** (live read of KRUDE Board v2 › Tasks; status is the only edit).
+Four tabs: **Capture** (voice/text/photo in), **History** (every captured item, search + filters), **Ideas** (my ideas + the shared jam list), **Board** (live read of KRUDE Board v2 › Tasks; status is the only edit).
+Tap your name (top right) for the **weekly report** and, for Youssef, the **OpenAI cost** per month.
 
 Always write the brand as **KRUDE** in files and UI. Never "Crude".
 Write replies to Youssef in ASD-STE100 Simplified Technical English. Keep them short.
@@ -17,18 +18,23 @@ CLAUDE.md               this file
 
 ## How it works
 
-- `index.html` POSTs JSON (`Content-Type: text/plain`, no preflight) to the Apps Script `/exec` URL in `const API_URL` (about line 150). Never change that URL unless Youssef gives a new one.
+- `index.html` POSTs JSON (`Content-Type: text/plain`, no preflight) to the Apps Script `/exec` URL in `const API_URL` (about line 180). Never change that URL unless Youssef gives a new one.
 - Auth: a private link key (`#k=...`). The backend compares SHA-256 hashes in Script Properties `KEY_YOUSSEF_HASH`, `KEY_AHMAD_HASH`. New key: run `newKeyForYoussef` / `newKeyForAhmad` in the Apps Script editor.
-- Actions: `identity`, `upload`, `review`, `confirm`, `list`, `board`, `set_status`.
+- Actions: `identity`, `upload`, `review`, `confirm`, `list`, `board`, `set_status`, `ideas`, `jam`, `report_draft`, `report_send`, `reports`, `costs`.
 - **Save** = `upload` only (fast). A 5-minute trigger `processPending` transcribes, writes the line in "18 - Capture Inbox", and sorts.
   **Save & Review** = `upload`, then `review` at once, then the user approves / keeps / rejects each item (`confirm`).
 - One JSON state file per capture: `cap_<Owner>_<id>.json` in `KRUDE Capture Drop/_Capture State`. Media in a folder per capture in `KRUDE Capture Drop`.
 - Approved items: `board_task` → append to Board › Tasks; `supplier` → "20 - Suppliers and Contacts"; everything else, and any update to an existing record → a handoff doc in the Handoffs folder (ChatGPT applies it). Items with money, prices, roles, strategy or operating changes need Youssef (`needs_youssef`).
+- Index: `_index.json` in `_Capture State` holds the latest 400 captures (copy of the cap files). History, Ideas, the trigger and the report read only this file. Every non-quiet `saveCap_` updates it (inside the lock). If a write fails, `INDEX_STALE` is set and the next read rebuilds it. Manual fix: run `rebuildIndex`.
+- Cost: each capture stores `cost` {usd, audio_secs, calls}. Month totals are in Script Property `COST_LEDGER`. Prices are estimates in `CFG.PRICES`; update them if OpenAI prices change.
+- Ideas: items with kind `idea`. The owner (or Youssef) can put one on the shared jam list; either founder can mark it discussed. Ahmad sees Youssef's ideas only when they are on the jam list (summary and notes only).
+- Weekly report: moved / blocked / needs decision, ISO week, Cairo time. Due from Thursday; Ahmad sees a banner until it is sent. The draft is filled from `_board_log.json` (status changes made in the app), Blocked tasks and his items that wait for Youssef. Stored in `_reports.json` and appended to "21 - Weekly Reports" (`REPORTS_DOC_ID`).
 - Phone safety: recordings are written to IndexedDB every second; the outbox keeps a capture until the server confirms it. Do not weaken this.
 
 ## Secrets (never in code, never in git)
 
-Script Properties: `OPENAI_API_KEY`, `KEY_YOUSSEF_HASH`, `KEY_AHMAD_HASH`, `DROP_FOLDER_ID`, `STATE_FOLDER_ID`, `RULES_DOC_ID`, `SUPPLIERS_SHEET_ID`.
+Script Properties: `OPENAI_API_KEY`, `KEY_YOUSSEF_HASH`, `KEY_AHMAD_HASH`, `DROP_FOLDER_ID`, `STATE_FOLDER_ID`, `RULES_DOC_ID`, `SUPPLIERS_SHEET_ID`, `REPORTS_DOC_ID`.
+Written by the app: `COST_LEDGER`, `INDEX_STALE`, `FILE__index.json`, `FILE__reports.json`, `FILE__board_log.json`.
 Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 
 ## Decisions (do not undo without asking Youssef)
@@ -55,7 +61,6 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 ## Open items
 
 - Real iPhone test of recovery (close Safari mid-recording) and offline send.
-- Measure real OpenAI cost per capture.
-- History reads the last 100 captures; add an index file if it gets slow.
-- Ideas list for jam sessions (later).
-- Ahmad's weekly 3-line report: moved / blocked / needs decision (later).
+- After v3 is deployed: run `setupV3` once in the Apps Script editor.
+- Compare the cost estimate with the real OpenAI usage page after one month.
+- `API_URL` in `web/index.html` and `DEPLOYMENT_ID` above are still empty.

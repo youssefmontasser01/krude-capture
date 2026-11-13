@@ -1,8 +1,11 @@
-/** KRUDE Capture v2.1 (Capture, History, Board tabs).
+/** KRUDE Capture v3.0 (Capture, History, Ideas, Board tabs).
  *  Save = upload only (fast). Voice-to-text, Inbox line and sorting run after the save:
  *  at once on "Save & Review", or every 5 minutes by a trigger for "Save".
+ *  v3: index file for fast lists, OpenAI cost log, Ideas + jam list, weekly report.
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
+ *  After you paste v3: run setupV3 once.
  */
+const VERSION=3.0;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -12,7 +15,10 @@ const CFG = Object.freeze({
   SORT_MODEL:'gpt-4.1-mini',
   TRANSCRIBE_MODEL:'gpt-4o-mini-transcribe', TRANSCRIBE_FALLBACK:'whisper-1',
   TRANSCRIBE_HINT:'KRUDE, LUNA, LUNA Space, LUNA Fade, Square Loop, Light Cube, Youssef, Ahmad, Bosta, Shopify, CNC, felt, dimmer.',
-  MAX_AUDIO:22000000, MAX_PHOTO:4000000, CONTEXT_ROWS:120, LIST_LIMIT:100
+  MAX_AUDIO:22000000, MAX_PHOTO:4000000, CONTEXT_ROWS:120, LIST_LIMIT:100, INDEX_MAX:400,
+  // USD estimates. Audio: per minute. Text models: per 1M tokens. Change here if OpenAI prices change.
+  PRICES:{'gpt-4o-mini-transcribe':{min:0.003},'gpt-4o-transcribe':{min:0.006},'whisper-1':{min:0.006},
+    'gpt-4.1-mini':{in:0.40,out:1.60},'gpt-4.1':{in:2.00,out:8.00},'gpt-4.1-nano':{in:0.10,out:0.40}}
 });
 const DESTS=['board_task','supplier','inventory_change','decision_log_candidate','fill_backlog','handbook_note','inbox_only'];
 const KINDS=['task','supplier_contact','issue','purchase','price','idea','note','decision_candidate'];
@@ -42,6 +48,7 @@ function setup(){return lock_(()=>{
  function make(prop,name,fn){if(!p.getProperty(prop)){const it=ops.getFilesByName(name);const f=it.hasNext()?it.next():fn();p.setProperty(prop,f.getId());}return p.getProperty(prop);}
  if(!p.getProperty('DROP_FOLDER_ID'))p.setProperty('DROP_FOLDER_ID',folder('KRUDE Capture Drop').getId());
  make('RULES_DOC_ID','19 - Capture Rules',()=>{const d=DocumentApp.create('19 - Capture Rules');d.getBody().setText('KRUDE Capture Rules');d.saveAndClose();const f=DriveApp.getFileById(d.getId());f.moveTo(ops);return f;});
+ make('REPORTS_DOC_ID','21 - Weekly Reports',()=>{const d=DocumentApp.create('21 - Weekly Reports');d.getBody().setText('KRUDE Weekly Reports (moved / blocked / needs decision). Written by KRUDE Capture.');d.saveAndClose();const f=DriveApp.getFileById(d.getId());f.moveTo(ops);return f;});
  make('SUPPLIERS_SHEET_ID','20 - Suppliers and Contacts',()=>{const s=SpreadsheetApp.create('20 - Suppliers and Contacts');s.getSheets()[0].appendRow(['Date','Name','Phone','Sells','Price','Place','Notes','Added by','Photo link']);const f=DriveApp.getFileById(s.getId());f.moveTo(ops);return f;});
  if(!p.getProperty('STATE_FOLDER_ID')){const drop=DriveApp.getFolderById(p.getProperty('DROP_FOLDER_ID'));const it=drop.getFoldersByName('_Capture State');p.setProperty('STATE_FOLDER_ID',(it.hasNext()?it.next():drop.createFolder('_Capture State')).getId());}
  ['YOUSSEF','AHMAD'].forEach(n=>{if(!p.getProperty('KEY_'+n+'_HASH')){const key=Utilities.getUuid()+Utilities.getUuid();p.setProperty('KEY_'+n+'_HASH',sha_(key));console.log(n+' private link key (shown once): '+key);}});
@@ -54,6 +61,14 @@ function setupV2(){
   ScriptApp.newTrigger('processPending').timeBased().everyMinutes(5).create();
   console.log('v2 ready: background job runs every 5 minutes.');
 }
+// v3: run ONCE after you paste this code. It makes the Weekly Reports doc and the History index.
+function setupV3(){
+  setupV2();
+  const x=lock_(()=>idxRebuild_());
+  console.log('v3 ready: index has '+x.caps.length+' captures.');
+}
+// Run this if History looks wrong. It reads every capture file again.
+function rebuildIndex(){const x=lock_(()=>idxRebuild_());console.log('Index rebuilt: '+x.caps.length+' captures.');}
 // Lost phone or lost link: run this. It makes a NEW key for that person and the old link stops working.
 function newKeyForYoussef(){newKey_('YOUSSEF');}
 function newKeyForAhmad(){newKey_('AHMAD');}
@@ -71,14 +86,50 @@ function capFile_(cid){const folder=stateFolder_();for(const o of ['Youssef','Ah
 function capFiles_(prefix){const it=stateFolder_().getFiles(),out=[];while(it.hasNext()){const f=it.next();const n=f.getName();if(n.indexOf(prefix)===0&&/\.json$/.test(n))out.push(f);}return out;}
 function loadCap_(cid,u){id_(cid);const f=capFile_(cid);need_(f,'Capture not found.');const c=JSON.parse(f.getBlob().getDataAsString());
   need_(u.admin||c.owner===u.name,'Access denied.');return {c:c,f:f};}
-function saveCap_(s){s.c.updated=now_();s.f.setContent(JSON.stringify(s.c));}
+// quiet = do not update the index (only for in-between saves; the last save of a request must not be quiet).
+function saveCap_(s,quiet){s.c.updated=now_();s.f.setContent(JSON.stringify(s.c));if(!quiet)idxPut_(s.c);}
+
+/* ---------- small JSON files in _Capture State: _index.json, _reports.json, _board_log.json ---------- */
+// Write these only inside lock_. A bad file throws (so a write never replaces data it could not read).
+function jfile_(name){const p=props_(),k='FILE_'+name,id=p.getProperty(k);
+  if(id){try{const f=DriveApp.getFileById(id);if(!f.isTrashed())return f;}catch(e){}}
+  const it=stateFolder_().getFilesByName(name);if(!it.hasNext())return null;const f=it.next();p.setProperty(k,f.getId());return f;}
+function jread_(name,dflt){const f=jfile_(name);return f?JSON.parse(f.getBlob().getDataAsString()):dflt;}
+function jwrite_(name,v){const f=jfile_(name),s=JSON.stringify(v);
+  if(f)f.setContent(s);else props_().setProperty('FILE_'+name,stateFolder_().createFile(name,s,MimeType.PLAIN_TEXT).getId());}
+
+/* ---------- index: the latest captures in one file, so History does not open every file ---------- */
+// The cap_*.json files stay the source of truth. The index is a copy and can be rebuilt at any time.
+function slim_(c){return {id:c.id,owner:c.owner,created:c.created,hint:c.hint,text:c.text,transcript:c.transcript,
+  audio:c.audio?{mime:c.audio.mime}:null,photos:(c.photos||[]).map(p=>({url:p.url})),status:c.status,error:c.error||'',
+  processing_until:c.processing_until||null,items:c.items||null,cost:c.cost||null};}
+function idxRebuild_(){const caps=[];capFiles_('cap_').forEach(f=>{try{caps.push(slim_(JSON.parse(f.getBlob().getDataAsString())));}catch(e){console.error('index skip '+f.getName()+': '+e);}});
+  caps.sort((a,b)=>b.created.localeCompare(a.created));const x={v:1,built:now_(),caps:caps.slice(0,CFG.INDEX_MAX)};
+  jwrite_('_index.json',x);props_().deleteProperty('INDEX_STALE');return x;}
+function idxOk_(x){return x&&x.v===1&&Array.isArray(x.caps)&&!props_().getProperty('INDEX_STALE');}
+// Read for lists (outside the lock). Rebuild only if the index is missing or marked stale.
+function idx_(){let x=null;try{x=jread_('_index.json',null);}catch(e){console.error('index read: '+e);}return idxOk_(x)?x:lock_(()=>idxRebuild_());}
+// Call inside lock_ only. If it fails, the capture is still safe; the next read rebuilds the index.
+function idxPut_(c){try{let x=null;try{x=jread_('_index.json',null);}catch(e){}
+    if(!idxOk_(x))x=idxRebuild_();
+    const r=slim_(c),i=x.caps.findIndex(y=>y.id===c.id);
+    if(i>=0)x.caps[i]=r;else{x.caps.push(r);x.caps.sort((a,b)=>b.created.localeCompare(a.created));x.caps=x.caps.slice(0,CFG.INDEX_MAX);}
+    jwrite_('_index.json',x);}
+  catch(e){console.error('index write: '+e);props_().setProperty('INDEX_STALE','1');}}
 
 /* ---------- web entry ---------- */
-function doGet(){return json_({ok:true,app:'KRUDE Capture',version:2.1});}
+function doGet(){return json_({ok:true,app:'KRUDE Capture',version:VERSION});}
 function doPost(e){try{
  need_(e&&e.postData&&e.postData.contents.length<32000000,'Request too large.');
  const r=JSON.parse(e.postData.contents),u=user_(r.key);
- if(r.action==='identity')return json_({ok:true,user:u,version:2.1});
+ if(r.action==='identity'){let rep=null;try{rep=reportState_(u);}catch(x){console.error('report state: '+x);}
+   return json_({ok:true,user:Object.assign({},u,{report:rep}),version:VERSION});}
+ if(r.action==='costs')return json_({ok:true,...costs_(u)});
+ if(r.action==='ideas')return json_({ok:true,...ideas_(u)});
+ if(r.action==='jam')return json_({ok:true,...jam_(r,u)});
+ if(r.action==='report_draft')return json_({ok:true,...reportDraft_(u)});
+ if(r.action==='report_send')return json_({ok:true,...reportSend_(r,u)});
+ if(r.action==='reports')return json_({ok:true,...reports_(u)});
  if(r.action==='upload')return json_({ok:true,...upload_(r,u)});
  if(r.action==='review')return json_({ok:true,...review_(r,u)});
  if(r.action==='confirm')return json_({ok:true,...confirm_(r,u)});
@@ -106,8 +157,11 @@ function upload_(r,u){
     c.photos=photos.map((v,i)=>{const f=folder.createFile(blob_(v,'image/jpeg',cid+'_photo_'+i+'.jpg',CFG.MAX_PHOTO));return {id:f.getId(),url:f.getUrl()};});
     if(r.audio){const mime=String(r.audio.mime||'');need_(['audio/mp4','audio/webm','audio/ogg','audio/wav','audio/mpeg'].includes(mime),'Unsupported audio.');
       const ext={'audio/mp4':'m4a','audio/webm':'webm','audio/ogg':'ogg','audio/wav':'wav','audio/mpeg':'mp3'}[mime];
-      const f=folder.createFile(blob_(r.audio,mime,cid+'_voice.'+ext,CFG.MAX_AUDIO));c.audio={id:f.getId(),url:f.getUrl(),mime:mime};}
+      const f=folder.createFile(blob_(r.audio,mime,cid+'_voice.'+ext,CFG.MAX_AUDIO));
+      const secs=Number(r.audio.secs);// phone timer; if missing, guess from the file size (about 16 KB per second)
+      c.audio={id:f.getId(),url:f.getUrl(),mime:mime,secs:Math.round(secs>0&&secs<7200?secs:f.getSize()/16000)};}
     stateFolder_().createFile('cap_'+u.name+'_'+cid+'.json',JSON.stringify(c),MimeType.PLAIN_TEXT);
+    idxPut_(c);
     return {capture:public_(c,u)};
   });
 }
@@ -119,39 +173,57 @@ function claim_(cid,u){return lock_(()=>{const s=loadCap_(cid,u);
   s.c.processing_until=new Date(Date.now()+300000).toISOString();saveCap_(s);return {c:s.c};});}
 function work_(cid,u){
   const cl=claim_(cid,u);if(cl.done)return cl.done;if(cl.busy)return cl.busy;
-  const c=cl.c;
+  const c=cl.c,spent={usd:0,secs:0,calls:0};
+  const pay=x=>{spent.usd+=x.usd;spent.secs+=x.secs||0;spent.calls++;
+    const k=c.cost||(c.cost={usd:0,audio_secs:0,calls:0});k.usd=round_(k.usd+x.usd);k.audio_secs+=Math.round(x.secs||0);k.calls++;};
   try{
-    if(c.audio&&!c.transcript){c.transcript=transcribe_(DriveApp.getFileById(c.audio.id).getBlob())||'(no speech found)';c.status='transcribed';putCap_(c,u);}
+    if(c.audio&&!c.transcript){const t=transcribe_(DriveApp.getFileById(c.audio.id).getBlob(),c.audio.secs);pay(t.cost);
+      c.transcript=t.text||'(no speech found)';c.status='transcribed';putCap_(c,u);}
     if(!c.inbox){inbox_(c,null);c.inbox=true;putCap_(c,u);}
-    const items=sortItems_(c);
-    return lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=c.transcript;s.c.inbox=true;
-      if(!s.c.items){s.c.items=items.map(x=>Object.assign(validateItem_(x,c.id),{id:Utilities.getUuid(),status:'proposed',revision:1}));}
-      s.c.status='ready';s.c.error='';s.c.processing_until=null;saveCap_(s);return s.c;});
-  }catch(e){lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=s.c.transcript||c.transcript;s.c.inbox=s.c.inbox||c.inbox;
-      s.c.processing_until=null;s.c.error=String(e.message||e).slice(0,200);saveCap_(s);});throw e;}
+    const sorted=sortItems_(c);pay(sorted.cost);
+    return lock_(()=>{const s=loadCap_(c.id,u),first=!s.c.items;s.c.transcript=c.transcript;s.c.inbox=true;s.c.cost=c.cost;
+      if(first){s.c.items=sorted.items.map(x=>Object.assign(validateItem_(x,c.id),{id:Utilities.getUuid(),status:'proposed',revision:1}));}
+      s.c.status='ready';s.c.error='';s.c.processing_until=null;saveCap_(s);ledger_(spent,first);return s.c;});
+  }catch(e){lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=s.c.transcript||c.transcript;s.c.inbox=s.c.inbox||c.inbox;s.c.cost=c.cost||s.c.cost||null;
+      s.c.processing_until=null;s.c.error=String(e.message||e).slice(0,200);saveCap_(s);ledger_(spent,false);});throw e;}
 }
-function putCap_(c,u){lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=c.transcript;s.c.inbox=c.inbox;s.c.status=c.status;saveCap_(s);});}
+function putCap_(c,u){lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=c.transcript;s.c.inbox=c.inbox;s.c.status=c.status;s.c.cost=c.cost||null;saveCap_(s,true);});}
 function review_(r,u){const c=work_(id_(r.capture_id),u);return {capture:public_(c,u)};}
 // Trigger: every 5 minutes. Works on "Save" captures. Stops before the 6-minute limit.
 function processPending(){
-  const start=Date.now(),admin={name:'Youssef',admin:true};
-  const todo=capFiles_('cap_').filter(f=>f.getLastUpdated().getTime()>Date.now()-30*86400000);
-  todo.sort((a,b)=>a.getDateCreated()-b.getDateCreated());
-  for(const f of todo){if(Date.now()-start>240000)break;
-    const c=JSON.parse(f.getBlob().getDataAsString());
-    if(c.items||c.error)continue; // errors wait for a manual Retry on the phone
+  const start=Date.now(),admin={name:'Youssef',admin:true},since=new Date(Date.now()-30*86400000).toISOString();
+  // Errors wait for a manual Retry on the phone. Oldest first.
+  const todo=idx_().caps.filter(c=>!c.items&&!c.error&&c.created>since).reverse();
+  for(const c of todo){if(Date.now()-start>240000)break;
     try{work_(c.id,admin);}catch(e){console.error('processPending '+c.id+': '+e);}}
 }
 
+/* ---------- cost log (estimates from CFG.PRICES) ---------- */
+function round_(x){return Math.round(x*1e6)/1e6;}
+function price_(model){return CFG.PRICES[model]||null;}
+// Call inside lock_. One line per month in Script Property COST_LEDGER. Keeps 24 months.
+function ledger_(spent,sorted){if(!spent.calls&&!sorted)return;const p=props_(),m=Utilities.formatDate(new Date(),CFG.TZ,'yyyy-MM');
+  let L={};try{L=JSON.parse(p.getProperty('COST_LEDGER')||'{}');}catch(e){console.error('COST_LEDGER was not valid. Starting again.');}
+  const r=L[m]||(L[m]={usd:0,calls:0,captures:0,audio_secs:0});
+  r.usd=round_(r.usd+spent.usd);r.calls+=spent.calls;r.audio_secs=Math.round(r.audio_secs+spent.secs);if(sorted)r.captures++;
+  const keys=Object.keys(L).sort();while(keys.length>24)delete L[keys.shift()];p.setProperty('COST_LEDGER',JSON.stringify(L));}
+function costs_(u){need_(u.admin,'Only Youssef can see costs.');let L={};try{L=JSON.parse(props_().getProperty('COST_LEDGER')||'{}');}catch(e){}
+  const months=Object.keys(L).sort().reverse().map(m=>Object.assign({month:m},L[m]));
+  const recent=idx_().caps.filter(c=>c.cost).slice(0,10).map(c=>({id:c.id,owner:c.owner,created:c.created,usd:c.cost.usd,audio_secs:c.cost.audio_secs,calls:c.cost.calls}));
+  return {months:months,recent:recent};}
+
 /* ---------- OpenAI ---------- */
 function apiKey_(){const k=props_().getProperty('OPENAI_API_KEY');need_(k,'Add OPENAI_API_KEY in Script Properties.');return k;}
-function transcribe_(blob){
+// Returns {text, cost:{usd, secs, model}}. secs = recording length from upload.
+function transcribe_(blob,secs){
   const call=m=>UrlFetchApp.fetch('https://api.openai.com/v1/audio/transcriptions',{method:'post',headers:{Authorization:'Bearer '+apiKey_()},
     payload:{model:m,file:blob,response_format:'json',prompt:CFG.TRANSCRIBE_HINT},muteHttpExceptions:true});
-  let res=call(props_().getProperty('TRANSCRIBE_MODEL')||CFG.TRANSCRIBE_MODEL);
-  if(res.getResponseCode()!==200){console.warn('transcribe primary failed: '+res.getContentText().slice(0,300));res=call(CFG.TRANSCRIBE_FALLBACK);}
+  let model=props_().getProperty('TRANSCRIBE_MODEL')||CFG.TRANSCRIBE_MODEL,res=call(model);
+  if(res.getResponseCode()!==200){console.warn('transcribe primary failed: '+res.getContentText().slice(0,300));model=CFG.TRANSCRIBE_FALLBACK;res=call(model);}
   need_(res.getResponseCode()===200,'Voice-to-text failed. The recording is safe in Drive. Tap Retry.');
-  return String(JSON.parse(res.getContentText()).text||'').trim();
+  const d=JSON.parse(res.getContentText()),s=d.usage&&d.usage.type==='duration'&&d.usage.seconds>0?Number(d.usage.seconds):(Number(secs)||0);
+  const pr=price_(model);if(!pr)console.warn('No price for '+model+'. Add it to CFG.PRICES.');
+  return {text:String(d.text||'').trim(),cost:{usd:pr&&pr.min?round_(s/60*pr.min):0,secs:s,model:model}};
 }
 function table_(id,tab){const s=SpreadsheetApp.openById(id);const t=tab?s.getSheetByName(tab):s.getSheets()[0];need_(t,'Missing sheet tab: '+tab);
   const n=t.getLastRow(),w=t.getLastColumn();need_(w>0,'Sheet needs a header row.');const header=t.getRange(1,1,1,w).getDisplayValues()[0];
@@ -180,8 +252,9 @@ function sortItems_(c){
     'Existing records require operation update and an exact record reference. Missing fields must be empty strings. Never invent a record match. '+
     'Use entry_id "'+c.id+'" for every item. Photos are attached as links only; do not describe them.\nRules:\n'+rules;
   const capture={entry_id:c.id,from:c.owner,date:date_(),type_hint:c.hint,typed_text:c.text,voice_text:c.transcript,photo_links:c.photos.map(p=>p.url)};
+  const model=props_().getProperty('SORT_MODEL')||CFG.SORT_MODEL;
   const res=UrlFetchApp.fetch('https://api.openai.com/v1/responses',{method:'post',contentType:'application/json',headers:{Authorization:'Bearer '+apiKey_()},
-    payload:JSON.stringify({model:props_().getProperty('SORT_MODEL')||CFG.SORT_MODEL,store:false,instructions:instructions,
+    payload:JSON.stringify({model:model,store:false,instructions:instructions,
       input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({records:context_(),capture:capture})}]}],
       text:{format:{type:'json_schema',name:'propose_items',strict:true,schema:schema_()}}}),muteHttpExceptions:true});
   need_(res.getResponseCode()===200,'Sorting failed. Your capture is safe. Tap Retry.');
@@ -189,7 +262,9 @@ function sortItems_(c){
   const out=[];(data.output||[]).forEach(o=>(o.content||[]).forEach(x=>{if(x.type==='output_text')out.push(x.text);}));
   need_(out.length,'No proposal returned. Tap Retry.');
   const items=JSON.parse(out.join('')).items;need_(Array.isArray(items)&&items.length>0&&items.length<=30,'Sorting returned no items. Tap Retry.');
-  return items;
+  const use=data.usage||{},tin=Number(use.input_tokens)||0,tout=Number(use.output_tokens)||0,pr=price_(model);
+  if(!pr)console.warn('No price for '+model+'. Add it to CFG.PRICES.');
+  return {items:items,cost:{usd:pr&&pr.in?round_((tin*pr.in+tout*pr.out)/1e6):0,secs:0,model:model,in:tin,out:tout}};
 }
 function sensitive_(x){return x.needs_youssef===true||['purchase','price','decision_candidate'].includes(x.kind)||['decision_log_candidate','handbook_note'].includes(x.destination)||
   x.sensitive_topics.length>0||!!x.fields.price||/(\b(price|cost|money|budget|profit|salary|strategy|role|payment|paid|invoice|egp|usd|deposit)\b|سعر|جنيه|فلوس|ميزاني|تكلف|دفع|استراتيجي|صلاحيات)/i.test(JSON.stringify(x.fields)+' '+x.summary);}
@@ -241,22 +316,23 @@ function append_(c,x){const marker='[capture-item:'+x.id+']';let dest=route_(x);
  throw new Error('Invalid destination.');}
 function confirm_(r,u){need_(Array.isArray(r.decisions)&&r.decisions.length<=60,'Invalid decisions.');
  return lock_(()=>{const s=loadCap_(id_(r.capture_id),u),c=s.c;need_(c.items,'Sort the capture first.');const results=[];
-  r.decisions.forEach(dec=>{const x=c.items.find(x=>x.id===dec.id);need_(x,'Unknown item.');need_(['confirm','keep','reject'].includes(dec.decision),'Invalid decision.');
+  try{r.decisions.forEach(dec=>{const x=c.items.find(x=>x.id===dec.id);need_(x,'Unknown item.');need_(['confirm','keep','reject'].includes(dec.decision),'Invalid decision.');
    const done=()=>results.push({id:x.id,status:x.status,result:x.result});
    if(['saved','kept','rejected','uncertain'].includes(x.status))return done();
-   if(x.status==='writing'){x.status='uncertain';x.result='Not saved: write result is unknown. Check Drive before any manual write.';saveCap_(s);return done();}
+   if(x.status==='writing'){x.status='uncertain';x.result='Not saved: write result is unknown. Check Drive before any manual write.';saveCap_(s,true);return done();}
    need_(dec.revision===x.revision,'Item changed. Open it again.');
    if(dec.edits){need_(u.admin||c.owner===u.name,'Access denied.');const before=JSON.stringify({summary:x.summary,destination:x.destination,fields:x.fields});
      const next=JSON.parse(JSON.stringify(x));['summary','destination'].forEach(k=>{if(typeof dec.edits[k]==='string')next[k]=dec.edits[k];});
      if(dec.edits.fields)FIELD_NAMES.forEach(k=>{if(typeof dec.edits.fields[k]==='string')next.fields[k]=dec.edits.fields[k];});
      validateItem_(next,c.id);if(before!==JSON.stringify({summary:next.summary,destination:next.destination,fields:next.fields})){Object.assign(x,next);x.revision++;}
      else x.needs_youssef=next.needs_youssef;}
-   if(dec.decision==='reject'){x.status='rejected';x.result='Not saved: rejected';saveCap_(s);return done();}
-   if(dec.decision==='keep'){x.status='kept';x.result='Kept in Inbox';saveCap_(s);return done();}
-   if(x.needs_youssef&&!u.admin){x.status='waiting';x.result='Waits for Youssef';saveCap_(s);return done();}
-   x.status='writing';x.approved_by=u.name;saveCap_(s);
+   if(dec.decision==='reject'){x.status='rejected';x.result='Not saved: rejected';saveCap_(s,true);return done();}
+   if(dec.decision==='keep'){x.status='kept';x.result='Kept in Inbox';saveCap_(s,true);return done();}
+   if(x.needs_youssef&&!u.admin){x.status='waiting';x.result='Waits for Youssef';saveCap_(s,true);return done();}
+   x.status='writing';x.approved_by=u.name;saveCap_(s,true);
    try{x.result=append_(c,x);x.status='saved';}catch(err){x.status='uncertain';x.result='Not saved: '+String(err.message)+' Check Drive before a manual write.';}
-   saveCap_(s);done();});
+   saveCap_(s,true);done();});}
+  catch(e){idxPut_(c);throw e;} // a stop half way: the index still gets the items saved before it
   // Inbox line becomes final only when every item has a final, known outcome.
   if(c.items.length&&c.items.every(x=>['saved','rejected','kept'].includes(x.status))){
    const st=c.items.every(x=>x.status==='kept')?'[KEPT IN INBOX]':'[SORTED -> '+Array.from(new Set(c.items.map(x=>x.status==='rejected'?'rejected':x.result))).join('; ')+']';
@@ -266,10 +342,68 @@ function confirm_(r,u){need_(Array.isArray(r.decisions)&&r.decisions.length<=60,
 /* ---------- 4. list: My Items ---------- */
 function public_(c,u){return {id:c.id,owner:c.owner,created:c.created,hint:c.hint,text:c.text,transcript:c.transcript,
   audio:!!c.audio,photos:c.photos.map(p=>p.url),status:c.status,error:c.error||'',processing:!!(c.processing_until&&Date.parse(c.processing_until)>Date.now()),
+  cost:u.admin&&c.cost?c.cost.usd:null,
   items:(c.items||[]).map(x=>({id:x.id,kind:x.kind,summary:x.summary,destination:x.destination,fields:x.fields,needs_youssef:x.needs_youssef,
-    reason:x.reason,operation:x.operation,status:x.status,result:x.result||'',revision:x.revision,can_confirm:u.admin||!x.needs_youssef}))};}
-function list_(u){const files=capFiles_(u.admin?'cap_':'cap_'+u.name+'_');files.sort((a,b)=>b.getDateCreated()-a.getDateCreated());
-  return {captures:files.slice(0,CFG.LIST_LIMIT).map(f=>public_(JSON.parse(f.getBlob().getDataAsString()),u))};}
+    reason:x.reason,operation:x.operation,status:x.status,result:x.result||'',revision:x.revision,can_confirm:u.admin||!x.needs_youssef,jam:x.jam||null}))};}
+// Reads the index only (one file). Older captures than INDEX_MAX are still in Drive.
+function list_(u){return {captures:idx_().caps.filter(c=>u.admin||c.owner===u.name).slice(0,CFG.LIST_LIMIT).map(c=>public_(c,u))};}
+
+/* ---------- 4b. Ideas + jam list ---------- */
+// "Mine": idea items from my captures (Youssef: all). "Jam": ideas that the owner put on the shared list.
+// Ahmad sees Youssef's ideas only when Youssef puts them on the jam list (summary and notes only).
+function ideas_(u){const mine=[],jam=[];
+  idx_().caps.forEach(c=>(c.items||[]).forEach(x=>{if(x.kind!=='idea'||x.status==='rejected')return;
+    const own=u.admin||c.owner===u.name;
+    const r={cid:c.id,iid:x.id,owner:c.owner,created:c.created,summary:x.summary,notes:(x.fields&&x.fields.notes)||'',jam:x.jam||null,can_edit:own};
+    if(own)mine.push(r);if(x.jam)jam.push(r);}));
+  return {mine:mine,jam:jam};}
+function jam_(r,u){const op=String(r.op||'');need_(['add','remove','discussed','open'].includes(op),'Invalid action.');
+  const cid=id_(r.capture_id),iid=id_(r.item_id);
+  lock_(()=>{const f=capFile_(cid);need_(f,'Capture not found.');const s={f:f,c:JSON.parse(f.getBlob().getDataAsString())};
+    const x=(s.c.items||[]).find(i=>i.id===iid);need_(x&&x.kind==='idea','Idea not found.');
+    const own=u.admin||s.c.owner===u.name;
+    if(op==='add'){need_(own,'Access denied.');x.jam={state:'open',by:u.name,at:now_()};}
+    else if(op==='remove'){need_(own,'Access denied.');delete x.jam;}
+    else{need_(x.jam,'This idea is not on the jam list.');x.jam=Object.assign({},x.jam,{state:op},op==='discussed'?{discussed_by:u.name,discussed_at:now_()}:{});}
+    saveCap_(s);});
+  return ideas_(u);}
+
+/* ---------- 4c. weekly report: moved / blocked / needs decision ---------- */
+// Weeks are ISO weeks (Monday to Sunday), Cairo time. The report is due from Thursday.
+function week_(d){const s=Utilities.formatDate(d||new Date(),CFG.TZ,'yyyy-MM-dd'),t=new Date(s+'T00:00:00Z');
+  t.setUTCDate(t.getUTCDate()-((t.getUTCDay()+6)%7)+3);const y=t.getUTCFullYear(),w1=new Date(Date.UTC(y,0,4));
+  return y+'-W'+String(1+Math.round(((t-w1)/86400000-3+((w1.getUTCDay()+6)%7))/7)).padStart(2,'0');}
+function reports_all_(){return jread_('_reports.json',[]);}
+// Which week to write now: this week from Thursday; on Monday to Wednesday, last week if it was not sent.
+function reportState_(u){const reps=reports_all_(),has=w=>reps.some(r=>r.week===w&&r.owner===u.name);
+  const day=Number(Utilities.formatDate(new Date(),CFG.TZ,'u')),cur=week_(),prev=week_(new Date(Date.now()-7*86400000));
+  const week=day>=4||has(prev)?cur:prev;return {week:week,due:!u.admin&&!has(week)&&(week===prev||day>=4)};}
+function reportDraft_(u){const st=reportState_(u),reps=reports_all_(),sent=reps.find(r=>r.week===st.week&&r.owner===u.name)||null;
+  const since=new Date(Date.now()-7*86400000).toISOString(),me=norm_(u.name);
+  let tasks=[];try{tasks=board_().tasks;}catch(e){console.error('report board: '+e);}
+  let log=[];try{log=jread_('_board_log.json',[]);}catch(e){}
+  const mineT=t=>norm_(t.owner).includes(me),own=new Set(tasks.filter(mineT).map(t=>t.title)),moved={};
+  log.filter(e=>e.at>since&&(e.by===u.name||own.has(e.title))).forEach(e=>moved[e.title]=e.to); // last change wins
+  const blocked=tasks.filter(t=>mineT(t)&&/block/i.test(t.status)).map(t=>t.title);
+  const decide=new Set();idx_().caps.forEach(c=>{if(c.owner!==u.name)return;(c.items||[]).forEach(x=>{
+    if(x.status==='waiting'||(x.kind==='decision_candidate'&&c.created>since&&!['rejected','kept'].includes(x.status)))decide.add(x.summary);});});
+  const cut=s=>s.slice(0,600);
+  return {week:st.week,sent:sent,draft:{moved:cut(Object.keys(moved).map(k=>k+' → '+moved[k]).join('; ')),blocked:cut(blocked.join('; ')),decision:cut(Array.from(decide).join('; '))}};}
+function reportSend_(r,u){const t={moved:short_(String(r.moved||'').trim(),1500),blocked:short_(String(r.blocked||'').trim(),1500),decision:short_(String(r.decision||'').trim(),1500)};
+  need_(t.moved||t.blocked||t.decision,'Write at least one line.');
+  const ok=[week_(),week_(new Date(Date.now()-7*86400000))],week=ok.includes(r.week)?r.week:ok[0];
+  const rep=lock_(()=>{const reps=reports_all_();let x=reps.find(y=>y.week===week&&y.owner===u.name);const again=!!x;
+    if(!x){x={week:week,owner:u.name,sent:now_()};reps.push(x);}Object.assign(x,t,{updated:now_()});
+    jwrite_('_reports.json',reps.slice(-300));
+    try{reportDoc_(x,again);}catch(e){console.error('report doc: '+e);}
+    return x;});
+  return {report:rep,state:reportState_(u)};}
+function reportDoc_(x,again){const id=props_().getProperty('REPORTS_DOC_ID');if(!id){console.warn('No REPORTS_DOC_ID. Run setupV3.');return;}
+  const d=DocumentApp.openById(id),b=d.getBody();
+  b.appendParagraph(x.week+' · '+x.owner+(again?' (updated)':'')).setHeading(DocumentApp.ParagraphHeading.HEADING3);
+  [['Moved',x.moved],['Blocked',x.blocked],['Needs decision',x.decision]].forEach(([k,v])=>b.appendParagraph(k+': '+(v||'—')));
+  d.saveAndClose();}
+function reports_(u){return {reports:reports_all_().filter(r=>u.admin||r.owner===u.name).sort((a,b)=>b.week.localeCompare(a.week)||a.owner.localeCompare(b.owner)).slice(0,12)};}
 
 /* ---------- 5. Board tab: live read of Board Tasks, status change only ---------- */
 const TASK_COLS={title:['task','task name','title','name'],owner:['owner','assigned to','assignee'],due:['due','due date','deadline'],status:['status'],
@@ -289,9 +423,13 @@ function board_(){const s=taskSheet_(),n=s.getLastRow(),w=s.getLastColumn();
 function setStatus_(r,u){short_(r.title,500);short_(r.status,60);need_(Number.isInteger(r.row)&&r.row>=2,'Invalid row.');
   return lock_(()=>{const s=taskSheet_(),w=s.getLastColumn(),m=taskMap_(s.getRange(1,1,1,w).getDisplayValues()[0]);
     const all=board_();need_(all.statuses.includes(r.status),'Invalid status.');
-    let row=r.row;const at=all.tasks.find(t=>t.row===row);
-    if(!at||at.title!==r.title){const same=all.tasks.filter(t=>t.title===r.title);need_(same.length===1,'The Board changed. Pull down to refresh.');row=same[0].row;}
+    let row=r.row,task=all.tasks.find(t=>t.row===row);
+    if(!task||task.title!==r.title){const same=all.tasks.filter(t=>t.title===r.title);need_(same.length===1,'The Board changed. Pull down to refresh.');task=same[0];row=task.row;}
     s.getRange(row,m.status+1).setValue(r.status);
     if(m.updated>=0)s.getRange(row,m.updated+1).setValue(date_());
     SpreadsheetApp.flush();console.log('Board status: row '+row+' "'+r.title+'" -> '+r.status+' by '+u.name);
+    // Log for the weekly report ("moved"). Only changes made in the app are logged.
+    try{let L=[];try{L=jread_('_board_log.json',[]);}catch(e){console.error('board log was not valid. Starting again.');}
+      L.push({at:now_(),title:r.title,owner:task.owner,from:task.status,to:r.status,by:u.name});jwrite_('_board_log.json',L.slice(-500));}
+    catch(e){console.error('board log: '+e);}
     return board_();});}
