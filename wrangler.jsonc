@@ -3,6 +3,7 @@
 {
   "name": "krude-capture",
   "compatibility_date": "2026-06-01",
+  "workers_dev": true,
   "assets": {
     "directory": "./web"
   }
