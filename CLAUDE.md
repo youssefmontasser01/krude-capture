@@ -10,7 +10,8 @@ Write replies to Youssef in ASD-STE100 Simplified Technical English. Keep them s
 ## Layout
 
 ```
-web/index.html          the whole phone app (one file, no build). Cloudflare Pages serves /web
+web/index.html          the whole phone app (one file, no build). Cloudflare Workers serves /web
+wrangler.jsonc          Cloudflare settings: publish /web only. Each push to main deploys
 apps-script/Code.js     backend (Google Apps Script web app). Pushed with clasp
 apps-script/appsscript.json
 CLAUDE.md               this file
@@ -51,7 +52,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 1. Edit the files.
 2. Check syntax: `node --check` on the script part of `web/index.html` and on `apps-script/Code.js`.
 3. For UI changes, test in a browser with a mocked API if you can (Playwright), at 390×844.
-4. Frontend: `git add -A && git commit -m "<what changed>" && git push` → Cloudflare deploys in about 1 minute.
+4. Frontend: `git add -A && git commit -m "<what changed>" && git push` → Cloudflare (Workers Builds, `npx wrangler deploy`) deploys in about 1 minute.
 5. Backend (only if `apps-script/` changed):
    `cd apps-script && clasp push -f && clasp deploy -i <DEPLOYMENT_ID> -d "<what changed>"`
    Always use `-i <DEPLOYMENT_ID>` so the `/exec` URL stays the same. Never create a new deployment.

@@ -1,0 +1,9 @@
+// Cloudflare Workers settings. Publishes only the phone app in /web (static files, no build).
+// The worker name must match the project name in Cloudflare.
+{
+  "name": "krude-capture",
+  "compatibility_date": "2026-06-01",
+  "assets": {
+    "directory": "./web"
+  }
+}
