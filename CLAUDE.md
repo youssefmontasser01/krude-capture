@@ -12,6 +12,7 @@ Write replies to Youssef in ASD-STE100 Simplified Technical English. Keep them s
 ```
 web/index.html          the whole phone app (one file, no build). Cloudflare Workers serves /web
 wrangler.jsonc          Cloudflare settings: publish /web only. Each push to main deploys
+                        Live app: https://krude-capture.youssef.workers.dev (private link: /#k=<key>)
 apps-script/Code.js     backend (Google Apps Script web app). Pushed with clasp
 apps-script/appsscript.json
 CLAUDE.md               this file

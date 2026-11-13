@@ -75,7 +75,7 @@ function newKeyForAhmad(){newKey_('AHMAD');}
 function newKey_(n){const key=Utilities.getUuid().replace(/-/g,'')+Utilities.getUuid().replace(/-/g,'');
   props_().setProperty('KEY_'+n+'_HASH',sha_(key));
   console.log('NEW '+n+' key (copy it now, it is shown once): '+key);
-  console.log('Private link: <your Cloudflare address>/#k='+key);}
+  console.log('Private link: https://krude-capture.youssef.workers.dev/#k='+key);}
 // v1 manual rotation still works.
 function rotateKeys(){lock_(()=>['YOUSSEF','AHMAD'].forEach(n=>{const p=props_(),k=p.getProperty('NEW_'+n+'_KEY');if(k){need_(k.length>=32,'Use at least 32 characters.');p.setProperty('KEY_'+n+'_HASH',sha_(k));p.deleteProperty('NEW_'+n+'_KEY');}}));}
 
