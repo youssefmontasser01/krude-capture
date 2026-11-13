@@ -70,5 +70,4 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 ## Open items
 
 - Real iPhone test of recovery (close Safari mid-recording) and offline send.
-- After v3 is deployed: run `setupV3` once in the Apps Script editor.
 - Compare the cost estimate with the real OpenAI usage page after one month.
