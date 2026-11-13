@@ -55,7 +55,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 5. Backend (only if `apps-script/` changed):
    `cd apps-script && clasp push -f && clasp deploy -i <DEPLOYMENT_ID> -d "<what changed>"`
    Always use `-i <DEPLOYMENT_ID>` so the `/exec` URL stays the same. Never create a new deployment.
-   DEPLOYMENT_ID: `<paste here from Deploy › Manage deployments>`
+   DEPLOYMENT_ID: `AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA`
 6. Tell Youssef in 2–4 short lines what changed and what to test on the phone. If the backend changed, say if a new function must be run once.
 
 ## Open items
@@ -63,4 +63,3 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 - Real iPhone test of recovery (close Safari mid-recording) and offline send.
 - After v3 is deployed: run `setupV3` once in the Apps Script editor.
 - Compare the cost estimate with the real OpenAI usage page after one month.
-- `API_URL` in `web/index.html` and `DEPLOYMENT_ID` above are still empty.
