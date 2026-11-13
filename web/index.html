@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Capture">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f4f1ec">
+<title>KRUDE Capture</title>
+<style>
+:root{--bg:#f4f1ec;--card:#fbf9f6;--ink:#1d1b18;--mute:#8a847a;--line:#e2ddd4;--soft:#ece7df;--red:#b3402e;--green:#4f6b47;--amber:#a87a2a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif}
+body{padding:env(safe-area-inset-top) 0 calc(76px + env(safe-area-inset-bottom))}
+.wrap{max-width:520px;margin:0 auto;padding:18px 18px 0}
+header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px}
+.brand{font-weight:700;letter-spacing:.32em;font-size:15px}
+.who{color:var(--mute);font-size:13px}
+.strip{font-size:13px;color:var(--mute);margin:0 0 14px;min-height:18px}
+.strip b{color:var(--ink);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
+.recwrap{display:flex;flex-direction:column;align-items:center;padding:26px 0 18px}
+.rec{width:132px;height:132px;border-radius:50%;border:1px solid var(--line);background:var(--card);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s}
+.rec:active{transform:scale(.96)}
+.rec .dot{width:46px;height:46px;border-radius:50%;background:var(--ink);transition:all .2s}
+.rec.on{border-color:var(--red)}
+.rec.on .dot{width:36px;height:36px;border-radius:8px;background:var(--red)}
+.timer{font-variant-numeric:tabular-nums;margin-top:12px;color:var(--mute);font-size:14px;min-height:20px}
+.timer.on{color:var(--red)}
+.lbl{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:14px 0 6px}
+textarea,input,select{width:100%;font:inherit;color:inherit;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+textarea{min-height:74px;resize:vertical}
+audio{width:100%;margin-top:4px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:transparent;border-radius:99px;padding:6px 13px;font:inherit;font-size:14px;color:var(--ink);cursor:pointer}
+.chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn{display:block;width:100%;border:1px solid var(--ink);background:var(--ink);color:var(--bg);border-radius:12px;padding:14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--ink)}
+.btn.small{display:inline-block;width:auto;padding:8px 14px;font-size:14px;font-weight:500}
+.btn:disabled{opacity:.4}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.link{background:none;border:none;color:var(--mute);font:inherit;font-size:14px;text-decoration:underline;padding:6px 0;cursor:pointer}
+.thumbs{display:flex;gap:8px;margin-top:8px}
+.thumbs div{position:relative}
+.thumbs img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.thumbs button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:none;background:var(--ink);color:var(--bg);font-size:12px}
+.banner{background:#fff6e5;border:1px solid #ecd9ae;border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:14px}
+.banner.err{background:#fbecea;border-color:#e9c3bd}
+.banner .row{margin-top:8px}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);display:flex;padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
+nav button{flex:1;background:none;border:none;font:inherit;font-size:14px;color:var(--mute);padding:10px;cursor:pointer}
+nav button.on{color:var(--ink);font-weight:600}
+nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;line-height:18px}
+.cap .meta{display:flex;justify-content:space-between;font-size:13px;color:var(--mute);margin-bottom:6px}
+.cap .words{font-size:15px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;unicode-bidi:plaintext}
+.pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--ink);white-space:nowrap}
+.pill.phone{background:#fff0d6;color:#7a5410}
+.pill.ok{background:#e4ecdf;color:#34502c}
+.pill.wait{background:#f7e8cf;color:#7a5410}
+.pill.bad{background:#f4dcd8;color:#8b2f20}
+.items{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.it{display:flex;justify-content:space-between;gap:8px;font-size:14px;padding:5px 0;align-items:flex-start}
+.it span:first-child{unicode-bidi:plaintext}
+.sheet{position:fixed;inset:0;background:rgba(29,27,24,.35);display:none;align-items:flex-end;z-index:9}
+.sheet.on{display:flex}
+.sheet .in{background:var(--bg);width:100%;max-width:560px;margin:0 auto;max-height:92vh;overflow:auto;border-radius:18px 18px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom))}
+.sheet h2{font-size:17px;margin:0 0 4px}
+.sheet .sub{color:var(--mute);font-size:13px;margin-bottom:12px;unicode-bidi:plaintext}
+.prop .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:6px}
+.prop .kind{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+.prop .why{font-size:13px;color:var(--mute);margin-top:6px}
+.prop textarea{min-height:56px}
+.prop .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+.seg button{border:1px solid var(--line);background:transparent;border-radius:10px;padding:9px 4px;font:inherit;font-size:14px;cursor:pointer;color:var(--ink)}
+.seg button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.steps{font-size:15px;line-height:2}
+.steps .s{color:var(--mute)}
+.steps .s.now{color:var(--ink)}
+.steps .s.done{color:var(--green)}
+.empty{color:var(--mute);text-align:center;padding:30px 0;font-size:14px}
+.hide{display:none!important}
+.hrow{display:flex;gap:10px;align-items:flex-start;padding:12px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.hrow .k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);width:52px;flex:none;padding-top:3px}
+.hrow .m{flex:1;min-width:0}
+.hrow .t{font-size:15px;unicode-bidi:plaintext}
+.hrow .d{font-size:12px;color:var(--mute);margin-top:3px}
+.sec{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:18px 0 4px}
+.task.over .d{color:var(--red)}
+.task.done .t{color:var(--mute);text-decoration:line-through}
+.detail p{margin:6px 0;unicode-bidi:plaintext}
+.detail a{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="brand">KRUDE</div><div class="who" id="who"></div></header>
+  <div id="banners"></div>
+
+  <!-- SETUP -->
+  <section id="vSetup" class="hide">
+    <div class="card">
+      <div class="lbl" style="margin-top:0">Your private link key</div>
+      <input id="setKey" autocomplete="off" placeholder="Paste the key from Youssef">
+      <div id="setApiWrap"><div class="lbl">App address (Apps Script /exec)</div>
+      <input id="setApi" autocomplete="off" placeholder="https://script.google.com/macros/s/.../exec"></div>
+      <div style="margin-top:14px"><button class="btn" id="setGo">Continue</button></div>
+      <p class="who" style="margin-top:12px">Lost your phone or link? Ask Youssef for a new link. The old link stops working.</p>
+    </div>
+  </section>
+
+  <!-- CAPTURE -->
+  <section id="vCap" class="hide">
+    <div class="strip" id="strip"></div>
+    <div class="card">
+      <div class="recwrap">
+        <div class="rec" id="recBtn" role="button" aria-label="Record"><div class="dot"></div></div>
+        <div class="timer" id="timer">Tap to record</div>
+      </div>
+      <div id="clip" class="hide"><audio id="player" controls playsinline></audio>
+        <button class="link" id="clipDel">Delete recording</button></div>
+
+      <div class="lbl">Text <span style="text-transform:none;letter-spacing:0">(optional)</span></div>
+      <textarea id="txt" dir="auto" placeholder="Write here if you cannot speak"></textarea>
+
+      <div class="lbl">Photo <span style="text-transform:none;letter-spacing:0">(optional)</span></div>
+      <div class="row"><label class="chip" for="photoIn">Add photo</label>
+        <input id="photoIn" type="file" accept="image/*" class="hide"></div>
+      <div class="thumbs" id="thumbs"></div>
+
+      <div class="lbl">Type <span style="text-transform:none;letter-spacing:0">(optional, the sorter decides)</span></div>
+      <div class="row" id="hints"></div>
+
+      <div class="btns">
+        <button class="btn ghost" id="saveBtn" disabled>Save</button>
+        <button class="btn" id="reviewBtn" disabled>Save &amp; Review</button>
+      </div>
+      <p class="who" style="margin:10px 0 0">Save: sorted later (within about 5 minutes). Save &amp; Review: sorted now, then you approve each item.</p>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="vHist" class="hide">
+    <input id="q" type="search" dir="auto" placeholder="Search your captures" style="margin-bottom:10px">
+    <div class="row" id="filters" style="margin-bottom:12px"></div>
+    <div id="list"></div>
+    <div style="text-align:center"><button class="link" id="refresh">Refresh</button></div>
+  </section>
+
+  <!-- BOARD -->
+  <section id="vBoard" class="hide">
+    <div class="row" id="bFilters" style="margin-bottom:12px"></div>
+    <div id="bList"></div>
+    <div style="text-align:center"><button class="link" id="bRefresh">Refresh</button></div>
+  </section>
+</div>
+
+<nav id="nav" class="hide">
+  <button id="tCap" class="on">Capture</button>
+  <button id="tItems">History<span class="n hide" id="badge"></span></button>
+  <button id="tBoard">Board</button>
+</nav>
+
+<div class="sheet" id="sheet"><div class="in" id="sheetIn"></div></div>
+
+<script>
+/* ===== CONFIG: paste your Apps Script /exec URL here before you upload to Cloudflare ===== */
+const API_URL = '';
+/* ======================================================================================== */
+
+const $=id=>document.getElementById(id);
+const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+const uuid=()=>(crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)}));
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTime=iso=>{const d=new Date(iso);return d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})};
+
+/* ---------- key + api ---------- */
+(function readLink(){const src=(location.hash||'').slice(1)+'&'+(location.search||'').slice(1);
+  const m=src.match(/(?:^|&)(?:k|key)=([^&]+)/);if(m){LS.set('krude_key',decodeURIComponent(m[1]));history.replaceState(null,'',location.pathname);}})();
+const api=()=>API_URL||LS.get('krude_api')||'';
+const key=()=>LS.get('krude_key')||'';
+let ME=null;
+
+async function call(action,body,timeoutMs){
+  const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),timeoutMs||120000);
+  try{const res=await fetch(api(),{method:'POST',body:JSON.stringify(Object.assign({action,key:key()},body||{})),signal:ctl.signal});
+    const data=await res.json();if(!data.ok)throw new Error(data.error||'Server error');return data;}
+  catch(e){if(e.name==='AbortError')throw new Error('No answer from the server.');if(e instanceof TypeError)throw new Error('No connection.');throw e;}
+  finally{clearTimeout(t)}
+}
+
+/* ---------- IndexedDB: recordings and the outbox stay on the phone until Drive confirms ---------- */
+const DB=(()=>{let p;const open=()=>p||(p=new Promise((ok,no)=>{const r=indexedDB.open('krude-capture',1);
+  r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore('chunks',{keyPath:'k'});d.createObjectStore('recs',{keyPath:'id'});d.createObjectStore('outbox',{keyPath:'id'});};
+  r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error);}));
+  const tx=async(store,mode,fn)=>{const d=await open();return new Promise((ok,no)=>{const t=d.transaction(store,mode),s=t.objectStore(store);let out;const r=fn(s);if(r)r.onsuccess=()=>{out=r.result};t.oncomplete=()=>ok(out);t.onerror=()=>no(t.error);t.onabort=()=>no(t.error||new Error('Storage full'));});};
+  return{put:(s,v)=>tx(s,'readwrite',x=>x.put(v)),get:(s,k)=>tx(s,'readonly',x=>x.get(k)),all:s=>tx(s,'readonly',x=>x.getAll()),del:(s,k)=>tx(s,'readwrite',x=>x.delete(k)),
+    range:(s,lo,hi)=>tx(s,'readonly',x=>x.getAll(IDBKeyRange.bound(lo,hi))),delRange:(s,lo,hi)=>tx(s,'readwrite',x=>x.delete(IDBKeyRange.bound(lo,hi)))};})();
+const pad=n=>String(n).padStart(6,'0');
+async function recBlob(id,mime){const parts=await DB.range('chunks',id+':',id+':~');return new Blob(parts.map(p=>p.buf),{type:mime});}
+async function dropRec(id){await DB.delRange('chunks',id+':',id+':~');await DB.del('recs',id);}
+
+/* ---------- draft (what is on the screen now) ---------- */
+const draft={recId:null,audio:null,mime:'',secs:0,photos:[],hint:''};
+const HINTS=['Note','Idea','Task','Issue'];
+function renderHints(){$('hints').innerHTML=HINTS.map(h=>`<button class="chip ${draft.hint===h?'on':''}" data-h="${h}">${h}</button>`).join('');}
+$('hints').onclick=e=>{const h=e.target.dataset.h;if(!h)return;draft.hint=draft.hint===h?'':h;renderHints();};
+$('txt').value=LS.get('krude_draft_text')||'';
+$('txt').oninput=()=>{LS.set('krude_draft_text',$('txt').value);canSave();};
+function canSave(){const has=!!(draft.audio||$('txt').value.trim()||draft.photos.length)&&!rec;$('saveBtn').disabled=!has;$('reviewBtn').disabled=!has;}
+function showClip(){if(draft.audio){$('player').src=URL.createObjectURL(draft.audio);$('clip').classList.remove('hide');$('timer').textContent='Recorded '+fmtSecs(draft.secs)+' · tap to record again';}
+  else{$('clip').classList.add('hide');$('player').removeAttribute('src');}canSave();}
+$('clipDel').onclick=async()=>{if(!confirm('Delete this recording?'))return;if(draft.recId)await dropRec(draft.recId);Object.assign(draft,{recId:null,audio:null,secs:0});$('timer').textContent='Tap to record';showClip();};
+function renderThumbs(){$('thumbs').innerHTML=draft.photos.map((b,i)=>`<div><img src="${URL.createObjectURL(b)}"><button data-i="${i}">✕</button></div>`).join('');canSave();}
+$('thumbs').onclick=e=>{const i=e.target.dataset.i;if(i==null)return;draft.photos.splice(+i,1);renderThumbs();};
+$('photoIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;if(draft.photos.length>=3)return toast('Up to three photos.');
+  try{draft.photos.push(await shrink(f));renderThumbs();}catch(err){toast('This photo cannot be read.');}};
+function shrink(file){return new Promise((ok,no)=>{const img=new Image();img.onload=()=>{const m=1600,s=Math.min(1,m/Math.max(img.width,img.height));
+  const c=document.createElement('canvas');c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+  c.toBlob(b=>b?ok(b):no(new Error('photo')),'image/jpeg',.8);URL.revokeObjectURL(img.src);};img.onerror=no;img.src=URL.createObjectURL(file);});}
+
+/* ---------- recording: every second is written to the phone ---------- */
+let rec=null,tick=null;
+const fmtSecs=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+function pickMime(){if(!window.MediaRecorder)return null;for(const m of ['audio/mp4','audio/webm;codecs=opus','audio/webm','audio/ogg'])if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(m))return m;return '';}
+$('recBtn').onclick=()=>rec?stopRec():startRec();
+async function startRec(){
+  const mime=pickMime();if(mime===null)return toast('This browser cannot record. Use Safari or Chrome.');
+  if(draft.audio&&!confirm('Replace the current recording?'))return;
+  let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}catch(e){return toast('Allow the microphone for this page in Settings.');}
+  if(draft.recId)await dropRec(draft.recId);Object.assign(draft,{recId:null,audio:null,secs:0});showClip();
+  const mr=new MediaRecorder(stream,mime?{mimeType:mime}:{});const id=uuid(),type=(mr.mimeType||mime||'audio/mp4');
+  rec={id,mr,stream,seq:0,start:Date.now(),type,writes:Promise.resolve()};
+  await DB.put('recs',{id,started:Date.now(),type,secs:0,stopped:false});
+  mr.ondataavailable=e=>{if(!e.data||!e.data.size||!rec)return;const k=id+':'+pad(rec.seq++),r=rec;
+    r.writes=r.writes.then(()=>e.data.arrayBuffer()).then(buf=>DB.put('chunks',{k,buf})).then(()=>DB.put('recs',{id,started:r.start,type,secs:(Date.now()-r.start)/1000,stopped:false})).catch(err=>toast('Phone storage problem: '+err.message));};
+  mr.start(1000);
+  $('recBtn').classList.add('on');$('timer').classList.add('on');
+  tick=setInterval(()=>{$('timer').textContent='● '+fmtSecs((Date.now()-rec.start)/1000)+' · tap to stop'},250);canSave();
+}
+async function stopRec(){const r=rec;if(!r)return;clearInterval(tick);
+  await new Promise(ok=>{r.mr.onstop=ok;try{r.mr.stop()}catch(e){ok()}});
+  r.stream.getTracks().forEach(t=>t.stop());await r.writes;
+  const secs=(Date.now()-r.start)/1000;await DB.put('recs',{id:r.id,started:r.start,type:r.type,secs,stopped:true});
+  rec=null;$('recBtn').classList.remove('on');$('timer').classList.remove('on');
+  Object.assign(draft,{recId:r.id,audio:await recBlob(r.id,r.type),mime:r.type,secs});showClip();}
+
+/* ---------- save: outbox first, then Drive ---------- */
+$('saveBtn').onclick=()=>save(false);
+$('reviewBtn').onclick=()=>save(true);
+async function save(review){
+  if(rec)await stopRec();
+  const id=uuid(),text=$('txt').value.trim();
+  const item={id,created:new Date().toISOString(),text,hint:draft.hint,review,state:'phone',err:'',
+    audio:draft.audio?{buf:await draft.audio.arrayBuffer(),mime:baseMime(draft.mime)}:null,
+    photos:await Promise.all(draft.photos.map(b=>b.arrayBuffer()))};
+  try{await DB.put('outbox',item);}catch(e){return toast('Not saved: phone storage is full. Free space and try again.');}
+  if(draft.recId)await dropRec(draft.recId);
+  Object.assign(draft,{recId:null,audio:null,secs:0,photos:[],hint:''});$('txt').value='';LS.del('krude_draft_text');
+  $('timer').textContent='Tap to record';showClip();renderThumbs();renderHints();
+  if(review)openProgress();
+  const ok=await send(id);
+  if(review){if(!ok)return progressFail('Not sent yet. It is safe on this phone and will send when you are online.');await runReview(id,true);}
+  else if(ok)toast('Saved to Drive.');
+}
+const baseMime=m=>{m=(m||'').split(';')[0];return m==='audio/x-m4a'||m==='audio/aac'?'audio/mp4':(m||'audio/mp4');};
+function b64(buf){const u=new Uint8Array(buf);let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s);}
+let sending=new Set();
+async function send(id){
+  if(sending.has(id))return false;sending.add(id);
+  try{const it=await DB.get('outbox',id);if(!it)return true;if(it.state==='sent')return true;
+    step('up');
+    const res=await call('upload',{capture_id:id,text:it.text,hint:it.hint,local_time:new Date(it.created).toString().slice(0,80),
+      audio:it.audio?{mime:it.audio.mime,data:b64(it.audio.buf)}:null,photos:it.photos.map(b=>({data:b64(b)}))},180000);
+    await DB.put('outbox',{id,created:it.created,text:it.text,hint:it.hint,review:it.review,state:'sent',sentAt:Date.now(),audio:null,photos:[]});
+    upsert(res.capture);updateStrip();return true;}
+  catch(e){const it=await DB.get('outbox',id);if(it){it.err=e.message;await DB.put('outbox',it);}updateStrip();
+    if(/wrong key/i.test(e.message))needSetup('This link key does not work. Ask Youssef for a new link.');return false;}
+  finally{sending.delete(id);}
+}
+async function flush(){if(!api()||!key())return;const all=await DB.all('outbox');
+  for(const it of all){if(it.state==='phone')await send(it.id);
+    else if(it.state==='sent'&&Date.now()-it.sentAt>7*86400000)await DB.del('outbox',it.id);}}
+async function updateStrip(){const all=await DB.all('outbox');const n=all.filter(x=>x.state==='phone').length;
+  $('strip').innerHTML=n?`<b>${n} on this phone, not sent yet.</b> <button class="link" id="sendNow">Send now</button>`:(navigator.onLine?'All captures are saved to Drive.':'Offline. New captures stay on this phone.');
+  const b=$('sendNow');if(b)b.onclick=()=>{flush().then(()=>toast('Done.'))};}
+addEventListener('online',()=>{updateStrip();flush();});addEventListener('offline',updateStrip);document.addEventListener('visibilitychange',()=>{if(!document.hidden)flush()});setInterval(flush,60000);
+
+/* ---------- review ---------- */
+let progressT=null;
+function openProgress(){openSheet(`<h2>Save &amp; Review</h2><div class="steps" id="steps">
+  <div class="s now" id="s-up">Saving to Drive…</div><div class="s" id="s-sort">Voice to text and sorting…</div></div>
+  <div class="who" id="pTime" style="margin-top:8px"></div><div class="row" style="margin-top:14px"><button class="btn ghost" id="pClose">Close (it continues)</button></div>`);
+  $('pClose').onclick=closeSheet;const t0=Date.now();clearInterval(progressT);progressT=setInterval(()=>{const e=$('pTime');if(e)e.textContent=Math.round((Date.now()-t0)/1000)+' s';},500);}
+function step(name){const up=$('s-up'),so=$('s-sort');if(!up)return;
+  if(name==='sort'){up.className='s done';up.textContent='✓ Saved to Drive';so.className='s now';}}
+function progressFail(msg){clearInterval(progressT);const s=$('steps');if(s)s.insertAdjacentHTML('afterend',`<div class="banner err" style="margin-top:12px">${esc(msg)}</div>`);}
+async function runReview(id,fromSave){
+  if(!fromSave)openProgress();step('sort');
+  try{const res=await call('review',{capture_id:id},300000);clearInterval(progressT);upsert(res.capture);
+    if(res.capture.processing&&!res.capture.items.length)return progressFail('Sorting is already running. Check History in a minute.');
+    openReview(res.capture);}
+  catch(e){progressFail(e.message);upsertErr(id,e.message);}
+}
+const DEST={board_task:'Board task',supplier:'Supplier',inventory_change:'Inventory (handoff)',decision_log_candidate:'Decision (handoff)',fill_backlog:'Fill Backlog (handoff)',handbook_note:'Handbook (handoff)',inbox_only:'Stays in Inbox'};
+const KIND={task:'Task',supplier_contact:'Supplier',issue:'Issue',purchase:'Purchase',price:'Price',idea:'Idea',note:'Note',decision_candidate:'Decision'};
+const FINAL=['saved','kept','rejected','uncertain'];
+let reviewing=null;
+function openReview(c){reviewing={c,choice:{}};
+  const open=c.items.filter(x=>!FINAL.includes(x.status)&&!(x.status==='waiting'&&!ME.admin));
+  const words=((c.text||'')+' '+(c.transcript||'')).trim();
+  openSheet(`<h2>Review ${c.items.length} item${c.items.length===1?'':'s'}</h2><div class="sub">${esc(words.slice(0,240))}</div>
+   ${c.items.map(x=>propHTML(x)).join('')}
+   <div class="btns"><button class="btn ghost" id="rClose">Later</button><button class="btn" id="rApply" ${open.length?'':'disabled'}>Apply</button></div>`);
+  open.forEach(x=>reviewing.choice[x.id]='keep');
+  $('sheetIn').querySelectorAll('.seg').forEach(seg=>seg.onclick=e=>{const v=e.target.dataset.v;if(!v)return;reviewing.choice[seg.dataset.id]=v;seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));});
+  $('rClose').onclick=closeSheet;$('rApply').onclick=applyReview;}
+function propHTML(x){const f=x.fields||{},done=FINAL.includes(x.status)||(x.status==='waiting'&&!ME.admin);
+  const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?`<select data-f="owner" data-id="${x.id}"><option value="">—</option>${['Youssef','Ahmad'].map(o=>`<option ${f.owner===o?'selected':''}>${o}</option>`).join('')}</select>`:`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
+  let extra='';
+  if(!done&&x.destination==='board_task')extra=`<div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}</div>`;
+  if(!done&&x.destination==='supplier')extra=`<div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div>`;
+  const approve=x.can_confirm?'Approve':'To Youssef';
+  return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)} → ${esc(DEST[x.destination]||x.destination)}</span>
+   ${x.needs_youssef?'<span class="pill wait">Needs Youssef</span>':''}</div>
+   ${done?`<div dir="auto">${esc(x.summary)}</div><div style="margin-top:8px">${statusPill(x)}</div>`:
+   `<textarea data-f="summary" data-id="${x.id}" dir="auto">${esc(x.summary)}</textarea>${extra}
+    ${x.reason?`<div class="why">${esc(x.reason)}</div>`:''}
+    <div class="seg" data-id="${x.id}"><button data-v="confirm">${approve}</button><button data-v="keep" class="on">Keep in Inbox</button><button data-v="reject">Reject</button></div>`}</div>`;}
+async function applyReview(){const c=reviewing.c;$('rApply').disabled=true;$('rApply').textContent='Saving…';
+  const decisions=Object.entries(reviewing.choice).map(([id,decision])=>{const x=c.items.find(i=>i.id===id);const edits={fields:{}};let changed=false;
+    $('sheetIn').querySelectorAll(`[data-id="${id}"][data-f]`).forEach(el=>{const k=el.dataset.f,v=el.value;
+      if(k==='summary'){if(v!==x.summary){edits.summary=v;changed=true;}}else if(v!==(x.fields[k]||'')){edits.fields[k]=v;changed=true;}});
+    return Object.assign({id,decision,revision:x.revision},changed&&decision!=='reject'?{edits}:{});});
+  try{const res=await call('confirm',{capture_id:c.id,decisions},180000);upsert(res.capture);
+    const bad=res.results.filter(r=>r.status==='uncertain');
+    closeSheet();toast(bad.length?'Some items were NOT saved. Open History.':'Done.');renderList();}
+  catch(e){$('rApply').disabled=false;$('rApply').textContent='Apply';toast(e.message);}}
+
+/* ---------- History: one row per item, search, filters ---------- */
+let CAPS=[],FILTER='All';
+try{CAPS=JSON.parse(LS.get('krude_caps')||'[]')}catch(e){CAPS=[]}
+const GROUP={task:'Tasks',purchase:'Tasks',idea:'Ideas',issue:'Issues',note:'Notes',supplier_contact:'Notes',price:'Notes',decision_candidate:'Notes'};
+function saveCaps(){LS.set('krude_caps',JSON.stringify(CAPS.slice(0,100)));}
+function upsert(c){if(!c)return;const i=CAPS.findIndex(x=>x.id===c.id);if(i>=0)CAPS[i]=c;else CAPS.unshift(c);saveCaps();renderList();}
+function upsertErr(id,msg){const c=CAPS.find(x=>x.id===id);if(c){c.error=msg;renderList();}}
+async function loadList(){try{const r=await call('list',{},60000);CAPS=r.captures;saveCaps();renderList();}catch(e){toast(e.message);}}
+function statusPill(x){const m={proposed:['To review','wait'],waiting:['Waits for Youssef','wait'],saved:[x.result||'Saved','ok'],kept:['Kept in Inbox',''],rejected:['Rejected',''],uncertain:['NOT saved – check','bad'],writing:['Saving…','wait']}[x.status]||[x.status,''];
+  return `<span class="pill ${m[1]}">${esc(m[0])}</span>`;}
+function capPill(c){if(c.error)return '<span class="pill bad">Problem</span>';if(c.processing)return '<span class="pill wait">Sorting…</span>';return '<span class="pill">Not sorted yet</span>';}
+function needsMe(c){return c.items.some(x=>x.status==='proposed'&&(c.owner===ME.name||ME.admin))||(ME.admin&&c.items.some(x=>x.status==='waiting'));}
+const words=c=>((c.text||'')+' '+(c.transcript||'')).trim();
+async function renderList(){if(!ME)return;
+  const groups=['All','Tasks','Ideas','Issues','Notes'].concat(ME.admin?['Waiting']:[]);
+  $('filters').innerHTML=groups.map(g=>`<button class="chip ${FILTER===g?'on':''}" data-g="${g}">${g}</button>`).join('');
+  const q=$('q').value.trim().toLowerCase(),hit=t=>!q||t.toLowerCase().includes(q);
+  const n=CAPS.filter(needsMe).length;$('badge').textContent=n;$('badge').classList.toggle('hide',!n);
+  const local=(await DB.all('outbox')).filter(x=>x.state==='phone').sort((a,b)=>b.created.localeCompare(a.created));
+  const rows=[];
+  local.forEach(it=>{if(FILTER==='All'&&hit(it.text||''))rows.push(`<div class="hrow"><div class="k">Phone</div><div class="m"><div class="t">${esc(it.text||(it.audio?'Voice recording':'Photo'))}</div>
+    <div class="d">${fmtTime(it.created)} · not sent yet ${it.err?'· '+esc(it.err):''}</div></div><button class="btn small ghost" data-send="${it.id}">Send</button></div>`);});
+  CAPS.forEach(c=>{const who=ME.admin&&c.owner!==ME.name?' · '+esc(c.owner):'';
+    if(!c.items.length){if((FILTER==='All'||c.hint+'s'===FILTER)&&hit(words(c)))rows.push(`<div class="hrow" data-cap="${c.id}"><div class="k">${esc(c.hint||'Capture')}</div><div class="m">
+      <div class="t">${esc(words(c)||(c.audio?'Voice recording':'Photo'))}</div><div class="d">${fmtTime(c.created)}${who}</div></div>${capPill(c)}</div>`);return;}
+    c.items.forEach(x=>{
+      if(FILTER==='Waiting'){if(!(x.needs_youssef&&['proposed','waiting'].includes(x.status)))return;}
+      else if(FILTER!=='All'&&GROUP[x.kind]!==FILTER)return;
+      if(!hit(x.summary+' '+words(c)+' '+Object.values(x.fields||{}).join(' ')))return;
+      rows.push(`<div class="hrow" data-cap="${c.id}" data-item="${x.id}"><div class="k">${esc(KIND[x.kind]||x.kind)}</div><div class="m">
+        <div class="t">${esc(x.summary)}</div><div class="d">${fmtTime(c.created)}${who}</div></div>${statusPill(x)}</div>`);});});
+  const review=CAPS.filter(needsMe);
+  $('list').innerHTML=(review.length?`<div class="banner">${review.length} capture${review.length>1?'s':''} to review. <div class="row"><button class="btn small" data-rev="${review[0].id}">Review now</button></div></div>`:'')+
+    (rows.join('')||'<div class="empty">Nothing here.</div>');}
+function openDetail(cid,iid){const c=CAPS.find(x=>x.id===cid);if(!c)return;const x=c.items.find(i=>i.id===iid);
+  const f=x?Object.entries(x.fields||{}).filter(([k,v])=>v&&k!=='notes'):[];
+  openSheet(`<div class="detail"><h2>${x?esc(KIND[x.kind]||x.kind):'Capture'}</h2><div class="sub">${fmtTime(c.created)} · ${esc(c.owner)}</div>
+    ${x?`<p dir="auto"><b>${esc(x.summary)}</b></p>${f.map(([k,v])=>`<p>${esc(k.replace('_',' '))}: ${esc(v)}</p>`).join('')}<p>${statusPill(x)} ${x.destination?esc(DEST[x.destination]||''):''}</p>`:`<p>${capPill(c)}</p>${c.error?`<p class="who">${esc(c.error)}</p>`:''}`}
+    <div class="lbl">What was said</div><p dir="auto">${esc(words(c)||'—')}</p>
+    ${c.photos.length?`<div class="lbl">Photos</div>${c.photos.map((u,i)=>`<p><a href="${esc(u)}" target="_blank">Photo ${i+1}</a></p>`).join('')}`:''}
+    <div class="row" style="margin-top:14px">${needsMe(c)?`<button class="btn small" id="dRev">Review</button>`:''}
+    ${!c.items.length&&(ME.admin||c.owner===ME.name)?`<button class="btn small ghost" id="dSort">${c.error?'Retry':'Sort now'}</button>`:''}
+    <button class="btn small ghost" id="dClose">Close</button></div></div>`);
+  $('dClose').onclick=closeSheet;if($('dRev'))$('dRev').onclick=()=>openReview(c);if($('dSort'))$('dSort').onclick=()=>runReview(c.id,false);}
+$('filters').onclick=e=>{const g=e.target.dataset.g;if(g){FILTER=g;renderList();}};
+$('q').oninput=()=>renderList();
+$('list').onclick=async e=>{const t=e.target.closest('[data-send],[data-rev],[data-cap]');if(!t)return;
+  if(t.dataset.send){t.disabled=true;await send(t.dataset.send);renderList();}
+  else if(t.dataset.rev){openReview(CAPS.find(c=>c.id===t.dataset.rev));}
+  else if(t.dataset.cap){openDetail(t.dataset.cap,t.dataset.item);}};
+$('refresh').onclick=loadList;
+
+/* ---------- Board: live read of Board Tasks; status is the only edit ---------- */
+let BOARD=null,BFILTER=null;
+try{BOARD=JSON.parse(LS.get('krude_board')||'null')}catch(e){}
+async function loadBoard(){try{BOARD=await call('board',{},60000);LS.set('krude_board',JSON.stringify(BOARD));renderBoard();}
+  catch(e){toast('Board: '+e.message);}}
+const isDone=t=>/^(done|complete|completed|finished)$/i.test(t.status.trim());
+const dueKey=t=>/^\d{4}-\d{2}-\d{2}/.test(t.due)?t.due.slice(0,10):(t.due&&!isNaN(Date.parse(t.due))?new Date(t.due).toISOString().slice(0,10):'9999');
+function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
+  $('bFilters').innerHTML=[ME.name,ME.name==='Youssef'?'Ahmad':'Youssef','All'].map(g=>`<button class="chip ${BFILTER===g?'on':''}" data-b="${g}">${g==='All'?'All':g===ME.name?'Me':g}</button>`).join('');
+  if(!BOARD){$('bList').innerHTML='<div class="empty">Loading…</div>';return;}
+  const today=BOARD.today,mine=t=>BFILTER==='All'||t.owner.toLowerCase().includes(BFILTER.toLowerCase());
+  const open=BOARD.tasks.filter(t=>mine(t)&&!isDone(t)).sort((a,b)=>dueKey(a).localeCompare(dueKey(b)));
+  const done=BOARD.tasks.filter(t=>mine(t)&&isDone(t));
+  const row=t=>{const over=!isDone(t)&&dueKey(t)<today;const st=/block/i.test(t.status)?'bad':/progress/i.test(t.status)?'wait':isDone(t)?'ok':'';
+    return `<div class="hrow task ${over?'over':''} ${isDone(t)?'done':''}" data-row="${t.row}"><div class="m"><div class="t">${esc(t.title)}</div>
+    <div class="d">${esc(t.owner||'No owner')}${t.due?' · '+(over?'Overdue · ':'')+esc(t.due):''}${t.function?' · '+esc(t.function):''}</div></div><span class="pill ${st}">${esc(t.status||'—')}</span></div>`;};
+  const over=open.filter(t=>dueKey(t)<today);const rest=open.filter(t=>dueKey(t)>=today);
+  $('bList').innerHTML=(over.length?`<div class="sec">Overdue · ${over.length}</div>`+over.map(row).join(''):'')+
+    `<div class="sec">Open · ${rest.length}</div>`+(rest.map(row).join('')||'<div class="empty">No open tasks.</div>')+
+    (done.length?`<div class="sec"><button class="link" id="bDone">Done · ${done.length} (show)</button></div><div id="bDoneList" class="hide">${done.map(row).join('')}</div>`:'');
+  if($('bDone'))$('bDone').onclick=()=>$('bDoneList').classList.toggle('hide');}
+$('bFilters').onclick=e=>{const g=e.target.dataset.b;if(g){BFILTER=g;renderBoard();}};
+$('bList').onclick=e=>{const r=e.target.closest('[data-row]');if(!r)return;const t=BOARD.tasks.find(x=>x.row===+r.dataset.row);if(!t)return;
+  openSheet(`<div class="detail"><h2 dir="auto">${esc(t.title)}</h2><div class="sub">${esc(t.owner||'No owner')}${t.due?' · Due '+esc(t.due):''}${t.function?' · '+esc(t.function):''}</div>
+    ${t.notes?`<p dir="auto">${esc(t.notes)}</p>`:''}<div class="lbl">Status</div>
+    <div class="row">${BOARD.statuses.map(s=>`<button class="chip ${s===t.status?'on':''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+    <p class="who" style="margin-top:12px">To change the task, owner or date, record it in Capture.</p>
+    <div class="row" style="margin-top:8px"><button class="btn small ghost" id="tClose">Close</button></div></div>`);
+  $('tClose').onclick=closeSheet;
+  $('sheetIn').querySelectorAll('[data-s]').forEach(b=>b.onclick=async()=>{const st=b.dataset.s;if(st===t.status)return;
+    $('sheetIn').querySelectorAll('[data-s]').forEach(x=>x.disabled=true);b.textContent='Saving…';
+    try{BOARD=await call('set_status',{row:t.row,title:t.title,status:st},60000);LS.set('krude_board',JSON.stringify(BOARD));closeSheet();renderBoard();toast('Board updated.');}
+    catch(err){toast(err.message);closeSheet();loadBoard();}});};
+$('bRefresh').onclick=loadBoard;
+
+/* ---------- shell ---------- */
+function openSheet(html){$('sheetIn').innerHTML=html;$('sheet').classList.add('on');}
+function closeSheet(){$('sheet').classList.remove('on');clearInterval(progressT);}
+$('sheet').onclick=e=>{if(e.target===$('sheet'))closeSheet();};
+let toastT;function toast(msg){let el=$('toast');if(!el){el=document.createElement('div');el.id='toast';el.style.cssText='position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1d1b18;color:#f4f1ec;padding:10px 16px;border-radius:10px;font-size:14px;z-index:20;max-width:90vw;text-align:center';document.body.appendChild(el);}
+  el.textContent=msg;el.style.display='block';clearTimeout(toastT);toastT=setTimeout(()=>el.style.display='none',3500);}
+function tab(name){$('vCap').classList.toggle('hide',name!=='cap');$('vHist').classList.toggle('hide',name!=='items');$('vBoard').classList.toggle('hide',name!=='board');
+  $('tCap').classList.toggle('on',name==='cap');$('tItems').classList.toggle('on',name==='items');$('tBoard').classList.toggle('on',name==='board');
+  if(name==='items'){renderList();loadList();}if(name==='board'){renderBoard();loadBoard();}}
+$('tCap').onclick=()=>tab('cap');$('tItems').onclick=()=>tab('items');$('tBoard').onclick=()=>tab('board');
+function needSetup(msg){['vCap','vHist','vBoard','nav'].forEach(i=>$(i).classList.add('hide'));$('vSetup').classList.remove('hide');
+  $('setApiWrap').classList.toggle('hide',!!API_URL);$('setKey').value='';if(msg)$('banners').innerHTML=`<div class="banner err">${esc(msg)}</div>`;}
+$('setGo').onclick=async()=>{const k=$('setKey').value.trim();if(k)LS.set('krude_key',k);const a=$('setApi').value.trim();if(a)LS.set('krude_api',a);start();};
+
+/* recovery: a recording that was not saved (Safari closed, phone locked, refresh) */
+async function recover(){const recs=(await DB.all('recs')).filter(r=>!rec||r.id!==rec.id);if(!recs.length)return;
+  const r=recs.sort((a,b)=>b.started-a.started)[0];const blob=await recBlob(r.id,r.type);
+  if(!blob.size){for(const x of recs)await dropRec(x.id);return;}
+  $('banners').innerHTML=`<div class="banner"><b>A recording was not saved.</b> ${fmtTime(new Date(r.started).toISOString())}, about ${fmtSecs(r.secs||blob.size/16000)}.${r.stopped?'':' The last second may be missing.'}
+   <div class="row"><button class="btn small" id="recUse">Use it</button><button class="btn small ghost" id="recDel">Delete</button></div></div>`;
+  $('recUse').onclick=async()=>{Object.assign(draft,{recId:r.id,audio:blob,mime:r.type,secs:r.secs||0});await DB.put('recs',Object.assign(r,{stopped:true}));$('banners').innerHTML='';showClip();
+    for(const x of recs)if(x.id!==r.id)await dropRec(x.id);};
+  $('recDel').onclick=async()=>{if(!confirm('Delete this recording for good?'))return;for(const x of recs)await dropRec(x.id);$('banners').innerHTML='';};}
+
+async function start(){
+  if(!api()||!key())return needSetup(api()?'':'');
+  $('vSetup').classList.add('hide');$('banners').innerHTML='';
+  try{const r=await call('identity',{},30000);ME=r.user;LS.set('krude_me',JSON.stringify(ME));}
+  catch(e){if(/wrong key/i.test(e.message))return needSetup('This link key does not work. Ask Youssef for a new link.');
+    ME=JSON.parse(LS.get('krude_me')||'null');if(!ME)return needSetup(e.message);toast('Offline. You can still record.');}
+  $('who').textContent=ME.name;['vCap','nav'].forEach(i=>$(i).classList.remove('hide'));tab('cap');
+  renderHints();renderThumbs();canSave();updateStrip();recover();flush();
+  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+}
+start();
+</script>
+</body>
+</html>
