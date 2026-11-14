@@ -521,7 +521,6 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
     <div class="lbl">Status</div>
     <div class="row">${BOARD.statuses.filter(s=>!/^dropped$/i.test(s)).map(s=>`<button class="chip ${s===t.status?'on':''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
     <div class="row" style="margin-top:14px"><button class="btn small ghost" id="tEditB">Edit task</button>${/^dropped$/i.test(String(t.status||"").trim())?'':'<button class="btn small ghost" id="tDropB">Drop task</button>'}<button class="btn small ghost" id="tClose">Close</button></div>
-    ${mine?'':'<p class="who" style="margin-top:10px">This is not your task. Your change goes to Youssef to approve.</p>'}
     <div id="tWork"></div></div>`);
   $('tClose').onclick=closeSheet;
   $('sheetIn').querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{if(b.dataset.s===t.status)return;
@@ -532,7 +531,7 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
         <div><div class="lbl" style="margin-top:4px">Owner</div><select id="eOwner">${['Youssef','Ahmad'].map(o=>`<option ${t.owner===o?'selected':''}>${o}</option>`).join('')}${['Youssef','Ahmad'].includes(t.owner)?'':`<option selected value="">${esc(t.owner||'—')}</option>`}</select></div>
         <div><div class="lbl" style="margin-top:4px">Due</div><input id="eDue" type="date" value="${esc(isoDue(t.due))}"></div>
         <div><div class="lbl" style="margin-top:4px">Product</div><input id="eProduct" dir="auto" value="${esc(t.product)}"></div>
-        <div><div class="lbl" style="margin-top:4px">Function</div><select id="eFunction">${fnl.map(f=>`<option value="${esc(f)}" ${t.function===f?'selected':''}>${esc(f||'—')}</option>`).join('')}${fns.includes(t.function)?'':`<option selected value="${esc(t.function)}">${esc(t.function)}</option>`}</select></div>
+        <div><div class="lbl" style="margin-top:4px">Function</div><select id="eFunction">${fnl.map(f=>`<option value="${esc(f)}" ${t.function===f?'selected':''}>${esc(f||'—')}</option>`).join('')}${fns().includes(t.function)||!t.function?'':`<option selected value="${esc(t.function)}">${esc(t.function)}</option>`}</select></div>
       </div></div>
       <div class="lbl">Notes</div><textarea id="eNotes" dir="auto">${esc(t.notes)}</textarea>
       <div style="margin-top:10px"><button class="btn" id="eGo">Preview changes</button></div>`;
