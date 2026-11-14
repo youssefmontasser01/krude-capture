@@ -27,7 +27,7 @@ CLAUDE.md               this file
 - **Save** = `upload` only (fast). A 5-minute trigger `processPending` transcribes, writes the line in "18 - Capture Inbox", and sorts.
   **Save & Review** = `upload`, then `review` at once, then the user approves / keeps / rejects each item (`confirm`).
 - One JSON state file per capture: `cap_<Owner>_<id>.json` in `KRUDE Capture Drop/_Capture State`. Media in a folder per capture in `KRUDE Capture Drop`.
-- Approved items: `board_task` → append to Board › Tasks; `supplier` → "20 - Suppliers and Contacts"; everything else, and any update to an existing record → a handoff doc in the Handoffs folder (ChatGPT applies it). Items with money, prices, roles, strategy or operating changes need Youssef (`needs_youssef`).
+- Approved items: `board_task` → append to Board › Tasks; `task_update` → change that Board task (v3.8); `supplier` → "20 - Suppliers and Contacts"; everything else, and any update to an existing record → a handoff doc in the Handoffs folder (ChatGPT applies it). Items with money, prices, roles, strategy or operating changes need Youssef (`needs_youssef`).
 - Index: `_index.json` in `_Capture State` holds the latest 400 captures (copy of the cap files). History, Ideas, the trigger and the report read only this file. Every non-quiet `saveCap_` updates it (inside the lock). If a write fails, `INDEX_STALE` is set and the next read rebuilds it. Manual fix: run `rebuildIndex`.
 - Cost: each capture stores `cost` {usd, audio_secs, calls}. Month totals are in Script Property `COST_LEDGER`. Prices are estimates in `CFG.PRICES`; update them if OpenAI prices change.
 - Ideas: items with kind `idea`. The owner (or Youssef) can put one on the shared jam list; either founder can mark it discussed. Ahmad sees Youssef's ideas only when they are on the jam list (summary and notes only).
@@ -45,6 +45,7 @@ CLAUDE.md               this file
 - Sorter context (v3.4): also gets the product names from Board › Pipeline. KRUDE facts and examples live in "19 - Capture Rules" (edited through ChatGPT handoffs).
 - Strategy Board (v3.5, Decision Log 13 Nov): an approved Board task with Function "Leadership" from Youssef's capture goes to "KRUDE Strategy Board (Private)" (`CFG.STRATEGY_SHEET_ID`, Tasks tab, same columns). Ahmad's tasks always go to Board v2. Youssef's Board tab has a Shared / Strategy (private) switch (`board` with `which:'strategy'`, `task_change` with `board:'strategy'`; admin only). Strategy changes: no Pipeline update, no sheet-diff, activity visible to Youssef only. Never show the Strategy Board to Ahmad.
 - Leadership (v3.7, Youssef 14 Nov): Ahmad never sees Leadership. `boardFor_` removes rows with Function Leadership for him; `planTask_` cannot find them; `fnsFor_` / `fns()` drop Leadership from his function lists and from the sorter schema and context; `validateItem_` clears it on his items; Board events and sheet-diff events for Leadership rows are `vis:['Youssef']`; `activity_` hides older events whose title is a Leadership task (flag `l` in `_board_snap.json`).
+- Task changes from Capture (v3.8, Youssef 14 Nov): destination `task_update` = the capture changes an existing Board task. The sorter gets `open_tasks` (ref `B<row>` Board v2, `S<row>` Strategy for Youssef only; Ahmad: no Leadership) and fills `change` {ref, status, due_date, owner, title, notes_add}; the server stores the task title in `change.task`. In review the card shows "Which task" (founder can pick another) and the same dry-run preview as the Board tab. Approve = `planTask_` op edit (status and notes_add allowed) + `applyPlan_`: write, read-back, Pipeline update, Recent changes. Money words still make it wait for Youssef. Drop needs a reason in "Add to notes". No match = founder picks the task; nothing goes to a handoff.
 - Phone safety: recordings are written to IndexedDB every second; the outbox keeps a capture until the server confirms it. Do not weaken this.
 
 ## Secrets (never in code, never in git)
@@ -85,7 +86,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 ## Open items
 
 - Records: "Handoff - 2026-11-14 - KRUDE Capture v3.7: D1, D2, D3 and Leadership decided" (KRUDE Operations root) waits for ChatGPT. It adds the three decisions to the Decision Log and closes the two Kickoff questions in 00 - State. (The v3.6 close handoff is DONE.)
-- Backend v3.7: Youssef confirms "App v3.7 · Server v3.7" on the Me screen (Apps Script by hand, deployment "capture v3.6").
+- v3.8 (task changes from Capture): backend first (paste Code.js, update deployment "capture v3.6"), then merge to main for the app. Records: add the v3.8 rule to the Decision Log with a handoff after Youssef tests it.
 - Ahmad's test feedback: not received yet.
 
 - Real iPhone test of recovery (close Safari mid-recording) and offline send.

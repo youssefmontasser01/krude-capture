@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.7;
+const VERSION=3.8;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -21,9 +21,12 @@ const CFG = Object.freeze({
   PRICES:{'gpt-4o-mini-transcribe':{min:0.003},'gpt-4o-transcribe':{min:0.006},'whisper-1':{min:0.006},
     'gpt-4.1-mini':{in:0.40,out:1.60},'gpt-4.1':{in:2.00,out:8.00},'gpt-4.1-nano':{in:0.10,out:0.40}}
 });
-const DESTS=['board_task','supplier','inventory_change','decision_log_candidate','fill_backlog','handbook_note','inbox_only'];
+const DESTS=['board_task','task_update','supplier','inventory_change','decision_log_candidate','fill_backlog','handbook_note','inbox_only'];
 const KINDS=['task','supplier_contact','issue','purchase','price','idea','note','decision_candidate'];
 const FIELD_NAMES=['title','product','owner','due_date','function','name','phone','sells','price','place','notes'];
+// v3.8: a capture can change an existing Board task (destination task_update). ref = "B<row>" (Board v2) or "S<row>" (Strategy Board, Youssef only).
+// task = the task title when it was matched. Empty = no change for that field.
+const CHANGE_NAMES=['ref','task','status','due_date','owner','title','notes_add'];
 // Board Function names (Decision Log / 00 - ChatGPT Project Instructions). Empty = not known.
 const FUNCTIONS=['Design','Product Development','Production','Commercial','Fulfilment','Fulfilment - Website','Finance','Legal and Admin','Leadership','Capture'];
 // Leadership is Youssef's private work (Strategy Board). Ahmad never sees it: not on the Board, not in a function list (Youssef, 14 Nov).
@@ -192,7 +195,8 @@ function work_(cid,u){
       c.transcript=t.text||'(no speech found)';c.status='transcribed';putCap_(c,u);}
     const sorted=sortItems_(c);pay(sorted.cost);
     const done=lock_(()=>{const s=loadCap_(c.id,u),first=!s.c.items;s.c.transcript=c.transcript;s.c.cost=c.cost;
-      if(first){s.c.items=sorted.items.map(x=>Object.assign(validateItem_(x,c.id,c.owner),{id:Utilities.getUuid(),status:'proposed',revision:1}));
+      if(first){s.c.items=sorted.items.map(x=>{if(x&&x.change){const t=sorted.refs[x.change.ref];x.change.task=t||'';if(!t)x.change.ref='';}
+          return Object.assign(validateItem_(x,c.id,c.owner),{id:Utilities.getUuid(),status:'proposed',revision:1});});
         emit_(s.c.items.map(x=>({by:s.c.owner,kind:'capture',vis:[s.c.owner],cid:s.c.id,text:s.c.owner+' captured '+aWord_(x.kind)+': '+x.summary})));}
       s.c.status='ready';s.c.error='';s.c.processing_until=null;saveCap_(s);ledger_(spent,first);return s.c;});
     // The Inbox line is written after sorting, so the founder sees the items sooner. If it fails, the 5-minute job tries again.
@@ -249,6 +253,13 @@ function table_(id,tab){const s=SpreadsheetApp.openById(id);const t=tab?s.getShe
   const n=t.getLastRow(),w=t.getLastColumn();need_(w>0,'Sheet needs a header row.');const header=t.getRange(1,1,1,w).getDisplayValues()[0];
   const start=Math.max(2,n-CFG.CONTEXT_ROWS+1);
   return {sheet:t,headers:header,rows:n>1?t.getRange(start,1,n-start+1,w).getDisplayValues():[],last_row:n};}
+// Open tasks the sorter can match a change to. Ahmad: no Leadership, no Strategy Board.
+function openTasks_(owner){const out=[],refs={};let statuses=[];
+  const add=(b,pre)=>b.tasks.forEach(t=>{if(isClosed_(t.status)||(owner!=='Youssef'&&isLead_(t.function)))return;const ref=pre+t.row;
+    refs[ref]=t.title;out.push([ref,t.title,t.owner,t.status,iso_(t.due),t.product]);});
+  const b=board_();statuses=b.statuses;add(b,'B');
+  if(owner==='Youssef'){try{add(board_(STRAT),'S');}catch(e){console.error('strategy tasks: '+e);}}
+  return {list:{headers:['ref','task','owner','status','due','product'],rows:out,statuses:statuses.concat(['Dropped'])},refs:refs};}
 function context_(owner){
   // Small context = faster and cheaper: only the columns the sorter needs.
   const pick=(t,names)=>{const idx=t.headers.map((h,i)=>names.includes(norm_(h))?i:-1).filter(i=>i>=0);
@@ -256,14 +267,17 @@ function context_(owner){
   const board=table_(CFG.BOARD_SHEET_ID,'Tasks'),sup=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
   let products=[];try{products=table_(CFG.BOARD_SHEET_ID,'Pipeline').rows.map(r=>r[0]).filter(Boolean);}catch(e){}
   if(owner!=='Youssef'){const fc=board.headers.findIndex(h=>norm_(h)==='function');if(fc>=0)board.rows=board.rows.filter(r=>!isLead_(r[fc]));}
-  return {board_tasks:pick(board,['task','task name','title','name','product','owner','status','function','due','due date','week']),
-          suppliers:pick(sup,['name','sells','place']),products:products};
+  const open=openTasks_(owner);
+  return {data:{board_tasks:pick(board,['task','task name','title','name','product','owner','status','function','due','due date','week']),
+          open_tasks:open.list,suppliers:pick(sup,['name','sells','place']),products:products},refs:open.refs};
 }
 function schema_(owner){const fp={};FIELD_NAMES.forEach(k=>fp[k]={type:'string'});fp.function={type:'string',enum:fnsFor_(owner).concat([''])};
   const obj={entry_id:{type:'string'},kind:{type:'string',enum:KINDS},summary:{type:'string'},destination:{type:'string',enum:DESTS},
     fields:{type:'object',properties:fp,required:FIELD_NAMES,additionalProperties:false},needs_youssef:{type:'boolean'},reason:{type:'string'},
     operation:{type:'string',enum:['create','update']},existing_record:{type:'string'},
-    sensitive_topics:{type:'array',items:{type:'string',enum:['money','price','roles','strategy','operating_change']}}};
+    sensitive_topics:{type:'array',items:{type:'string',enum:['money','price','roles','strategy','operating_change']}},
+    change:{type:'object',properties:{ref:{type:'string'},status:{type:'string'},due_date:{type:'string'},owner:{type:'string',enum:['','Youssef','Ahmad']},
+      title:{type:'string'},notes_add:{type:'string'}},required:['ref','status','due_date','owner','title','notes_add'],additionalProperties:false}};
   return {type:'object',properties:{items:{type:'array',items:{type:'object',properties:obj,required:Object.keys(obj),additionalProperties:false}}},required:['items'],additionalProperties:false};}
 function sortItems_(c){
   const rules=DocumentApp.openById(props_().getProperty('RULES_DOC_ID')).getBody().getText();
@@ -275,13 +289,16 @@ function sortItems_(c){
     'Use note/inbox_only only for a thought with no action, and say why in reason. '+
     'Set sensitive_topics only when the item is about money, prices, roles, strategy or an operating change; a plain task has none. Set needs_youssef false (the app decides it). Decisions are decision_candidate only. '+
     'Existing records require operation update and an exact record reference. Missing fields must be empty strings. Never invent a record match. '+
+    'A change to a task that is already in open_tasks (new due date, new owner, a status such as In progress, Blocked or Done, a new title, or a fact to add to its notes) is destination task_update, operation update: '+
+    'set change.ref to that task\'s ref and fill only the change fields that change (status from open_tasks.statuses; due_date as YYYY-MM-DD; notes_add = the new fact, short). '+
+    'If you are not sure which task it is, leave change.ref empty; the founder picks it. Do not also make a new board_task for the same thing. For every other item, all change fields are empty strings. '+
     'Board tasks: product only if the capture names a KRUDE product; function from the fixed list or empty; owner and due_date only if said, never guessed. '+
     'Use entry_id "'+c.id+'" for every item. Photos are attached as links only; do not describe them.\nRules:\n'+rules;
   const capture={entry_id:c.id,from:c.owner,date:date_(),type_hint:c.hint,typed_text:c.text,voice_text:c.transcript,photo_links:c.photos.map(p=>p.url)};
-  const model=props_().getProperty('SORT_MODEL')||CFG.SORT_MODEL;
+  const model=props_().getProperty('SORT_MODEL')||CFG.SORT_MODEL,ctx=context_(c.owner);
   const res=UrlFetchApp.fetch('https://api.openai.com/v1/responses',{method:'post',contentType:'application/json',headers:{Authorization:'Bearer '+apiKey_()},
     payload:JSON.stringify({model:model,store:false,instructions:instructions,
-      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({records:context_(c.owner),capture:capture})}]}],
+      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({records:ctx.data,capture:capture})}]}],
       text:{format:{type:'json_schema',name:'propose_items',strict:true,schema:schema_(c.owner)}}}),muteHttpExceptions:true});
   need_(res.getResponseCode()===200,'Sorting failed. Your capture is safe. Tap Retry.');
   const data=JSON.parse(res.getContentText());need_(data.status==='completed','Sorting did not finish. Tap Retry.');
@@ -290,10 +307,10 @@ function sortItems_(c){
   const items=JSON.parse(out.join('')).items;need_(Array.isArray(items)&&items.length>0&&items.length<=30,'Sorting returned no items. Tap Retry.');
   const use=data.usage||{},tin=Number(use.input_tokens)||0,tout=Number(use.output_tokens)||0,pr=price_(model);
   if(!pr)console.warn('No price for '+model+'. Add it to CFG.PRICES.');
-  return {items:items,cost:{usd:pr&&pr.in?round_((tin*pr.in+tout*pr.out)/1e6):0,secs:0,model:model,in:tin,out:tout}};
+  return {items:items,refs:ctx.refs,cost:{usd:pr&&pr.in?round_((tin*pr.in+tout*pr.out)/1e6):0,secs:0,model:model,in:tin,out:tout}};
 }
 function sensitive_(x){return ['purchase','price','decision_candidate'].includes(x.kind)||['decision_log_candidate','handbook_note'].includes(x.destination)||
-  x.sensitive_topics.length>0||!!x.fields.price||/(\b(price|cost|money|budget|profit|salary|strategy|role|payment|paid|invoice|egp|usd|deposit)\b|سعر|جنيه|فلوس|ميزاني|تكلف|دفع|استراتيجي|صلاحيات)/i.test(Object.values(x.fields).join(' ')+' '+x.summary);} // values only: the field name "price" must not count
+  x.sensitive_topics.length>0||!!x.fields.price||/(\b(price|cost|money|budget|profit|salary|strategy|role|payment|paid|invoice|egp|usd|deposit)\b|سعر|جنيه|فلوس|ميزاني|تكلف|دفع|استراتيجي|صلاحيات)/i.test(Object.values(x.fields).join(' ')+' '+x.summary+(x.change?' '+[x.change.title,x.change.notes_add].join(' '):''));} // values only: the field name "price" must not count
 function validateItem_(x,cid,owner){need_(x&&typeof x==='object','Invalid item.');x.entry_id=cid;
   need_(KINDS.includes(x.kind)&&DESTS.includes(x.destination),'Invalid item.');short_(x.summary,1000);short_(x.reason,2000);
   need_(['create','update'].includes(x.operation),'Invalid operation.');short_(x.existing_record,1000);
@@ -301,6 +318,11 @@ function validateItem_(x,cid,owner){need_(x&&typeof x==='object','Invalid item.'
   FIELD_NAMES.forEach(k=>{if(x.fields[k]==null)x.fields[k]='';short_(x.fields[k],4000);});
   if(x.fields.function&&!FUNCTIONS.includes(x.fields.function)){const f=FUNCTIONS.find(n=>norm_(n)===norm_(x.fields.function));x.fields.function=f||'';}
   if(owner!=='Youssef'&&isLead_(x.fields.function))x.fields.function='';
+  const ch=x.change&&typeof x.change==='object'?x.change:{};x.change={};CHANGE_NAMES.forEach(k=>{x.change[k]=ch[k]==null?'':short_(String(ch[k]).trim(),k==='notes_add'?2000:500);});
+  if(x.destination!=='task_update')CHANGE_NAMES.forEach(k=>x.change[k]='');
+  else{const v=x.change;x.operation='update';
+    if(!/^[BS]\d{1,6}$/.test(v.ref)||(v.ref[0]==='S'&&owner!=='Youssef')||!v.task){v.ref='';v.task='';}
+    if(!OWNERS.includes(v.owner))v.owner='';if(v.due_date&&!/^\d{4}-\d{2}-\d{2}$/.test(v.due_date))v.due_date='';}
   if(x.kind==='decision_candidate')x.destination='decision_log_candidate';
   if(x.destination==='board_task')need_(x.fields.title.trim(),'Task needs a title.');
   if(x.destination==='supplier')need_(x.fields.name.trim(),'Supplier needs a name.');
@@ -322,9 +344,17 @@ function cleanCell_(x){x=String(x||'');return /^[=+\-@\t\r]/.test(x)?"'"+x:x;}
 function norm_(x){return String(x||'').trim().toLowerCase().replace(/[\s_\-]+/g,' ');}
 function isDuplicate_(t,value,aliases){const col=t.headers.findIndex(h=>aliases.includes(norm_(h)));need_(col>=0,'A required sheet header is missing. Use a handoff.');
   if(t.last_row<2)return false;return t.sheet.getRange(2,col+1,t.last_row-1,1).getDisplayValues().some(r=>norm_(r[0])===norm_(value));}
-function route_(x){return x.operation==='update'||x.existing_record||!['board_task','supplier','inbox_only'].includes(x.destination)?'handoff':x.destination;}
-function append_(c,x){const marker='[capture-item:'+x.id+']';let dest=route_(x);
+function route_(x){if(x.destination==='task_update')return 'task_update';return x.operation==='update'||x.existing_record||!['board_task','supplier','inbox_only'].includes(x.destination)?'handoff':x.destination;}
+function append_(c,x,u){const marker='[capture-item:'+x.id+']';let dest=route_(x);
  if(dest==='inbox_only')return 'Kept in Inbox';
+ // v3.8: change an existing task with the same plan, write and read-back as the Board tab.
+ if(dest==='task_update'){const v=x.change||{};need_(v.ref&&v.task,'Pick the Board task first.');
+   const which=v.ref[0]==='S'?STRAT:'',changes={};
+   if(v.status)changes.status=v.status;if(v.due_date)changes.due=v.due_date;if(v.owner)changes.owner=v.owner;if(v.title)changes.title=v.title;
+   if(v.notes_add)changes.notes_add=v.notes_add+' (capture '+date_()+' '+c.owner+')';
+   need_(Object.keys(changes).length,'Nothing to change. Fill at least one field.');
+   const p=planTask_({row:Number(v.ref.slice(1)),title:v.task,board:which,op:'edit',changes:changes},u);applyPlan_(p,u);
+   return which?'Changed on the Strategy Board':'Changed on the Board';}
  // Decision Log 13 Nov: Function Leadership -> KRUDE Strategy Board (Private), only from Youssef's captures. Ahmad's tasks always go to Board v2.
  const strat=dest==='board_task'&&x.fields.function==='Leadership'&&c.owner==='Youssef';
  if(dest==='board_task'){const t=table_(strat?CFG.STRATEGY_SHEET_ID:CFG.BOARD_SHEET_ID,'Tasks');const A={title:['task','task name','title','name'],product:['product'],owner:['owner','assigned to','assignee'],due_date:['due','due date','deadline'],function:['function','team'],week:['week'],status:['status'],notes:['notes','note','description','source']};
@@ -363,17 +393,19 @@ function confirm_(r,u){need_(Array.isArray(r.decisions)&&r.decisions.length<=60,
    if(['saved','rejected','uncertain'].includes(x.status)&&!(x.status==='saved'&&x.result==='Kept in Inbox'))return done();
    if(x.status==='writing'){x.status='uncertain';x.result='Not saved: write result is unknown. Check Drive before any manual write.';saveCap_(s,true);return done();}
    need_(dec.revision===x.revision,'Item changed. Open it again.');
-   if(dec.edits){need_(u.admin||c.owner===u.name,'Access denied.');const before=JSON.stringify({summary:x.summary,destination:x.destination,fields:x.fields});
-     const next=JSON.parse(JSON.stringify(x));['summary','destination'].forEach(k=>{if(typeof dec.edits[k]==='string')next[k]=dec.edits[k];});
+   if(dec.edits){need_(u.admin||c.owner===u.name,'Access denied.');     const next=JSON.parse(JSON.stringify(x));['summary','destination'].forEach(k=>{if(typeof dec.edits[k]==='string')next[k]=dec.edits[k];});
      if(dec.edits.fields)FIELD_NAMES.forEach(k=>{if(typeof dec.edits.fields[k]==='string')next.fields[k]=dec.edits.fields[k];});
-     validateItem_(next,c.id,c.owner);if(before!==JSON.stringify({summary:next.summary,destination:next.destination,fields:next.fields})){Object.assign(x,next);x.revision++;}
+     if(dec.edits.change&&typeof dec.edits.change==='object'){next.change=Object.assign({},next.change||{});CHANGE_NAMES.forEach(k=>{if(typeof dec.edits.change[k]==='string')next.change[k]=dec.edits.change[k];});}
+     validateItem_(next,c.id,c.owner);if(next.change.ref&&next.change.ref[0]==='S')need_(u.admin,'Only Youssef can see the Strategy Board.');
+     const key=y=>JSON.stringify({summary:y.summary,destination:y.destination,fields:y.fields,change:y.change||null});
+     if(key(x)!==key(next)){Object.assign(x,next);x.revision++;}
      else x.needs_youssef=next.needs_youssef;}
    if(dec.decision==='reject'){x.status='rejected';x.result='Not saved: rejected';saveCap_(s,true);return done();}
    if(dec.decision==='keep'){x.status='kept';x.result='Kept in Inbox';saveCap_(s,true);return done();}
    if(x.needs_youssef&&!u.admin){x.status='waiting';x.result='Waits for Youssef';saveCap_(s,true);
      emit_([{by:u.name,kind:'capture',vis:[c.owner],cid:c.id,text:u.name+' sent to Youssef: '+x.summary}]);return done();}
    x.status='writing';x.approved_by=u.name;saveCap_(s,true);
-   try{x.result=append_(c,x);x.status='saved';
+   try{x.result=append_(c,x,u);x.status='saved';
      const t=x.result==='Saved to Strategy Board'?{vis:['Youssef'],text:u.name+' added to the Strategy Board: '+x.fields.title}
        :x.result==='Saved to Board Tasks'?{vis:'all',title:x.fields.title,text:u.name+' added to the Board: '+x.fields.title+(x.fields.owner?' ('+x.fields.owner+')':'')}
        :x.result==='Saved to Suppliers and Contacts'?{vis:'all',text:u.name+' added a supplier: '+x.fields.name}
@@ -393,7 +425,7 @@ function public_(c,u){return {id:c.id,owner:c.owner,created:c.created,hint:c.hin
   audio:!!c.audio,photos:c.photos.map(p=>p.url),status:c.status,error:c.error||'',processing:!!(c.processing_until&&Date.parse(c.processing_until)>Date.now()),
   cost:u.admin&&c.cost?c.cost.usd:null,
   items:(c.items||[]).map(x=>({id:x.id,kind:x.kind,summary:x.summary,destination:x.destination,fields:x.fields,needs_youssef:x.needs_youssef,
-    reason:x.reason,operation:x.operation,status:x.status,result:x.result||'',revision:x.revision,can_confirm:u.admin||!x.needs_youssef,jam:x.jam||null}))};}
+    reason:x.reason,operation:x.operation,change:x.change||null,status:x.status,result:x.result||'',revision:x.revision,can_confirm:u.admin||!x.needs_youssef,jam:x.jam||null}))};}
 // Reads the index only (one file). Older captures than INDEX_MAX are still in Drive.
 function list_(u){return {captures:idx_().caps.filter(c=>u.admin||c.owner===u.name).slice(0,CFG.LIST_LIMIT).map(c=>public_(c,u))};}
 
@@ -527,6 +559,12 @@ function planTask_(r,u){
     if(c.product!=null){const v=short_(String(c.product).trim(),100);if(v!==task.product)set.product=v;}
     if(c.function!=null){const v=String(c.function);need_(v===''||fnsFor_(u.admin?'Youssef':u.name).includes(v),'Unknown function.');if(v!==task.function)set.function=v;}
     if(c.notes!=null){const v=short_(String(c.notes).trim(),3000);if(v!==fullNotes.trim())set.notes=v;}
+    // v3.8 (changes from a capture): status and "add to notes" in the same edit
+    if(c.status!=null&&String(c.status)!==''){const v=short_(String(c.status),60);need_(all.statuses.includes(v)||v==='Dropped','Invalid status: '+v);if(v!==task.status)set.status=v;}
+    if(c.notes_add!=null&&String(c.notes_add).trim()){need_(c.notes==null,'Invalid change.');let v=short_(String(c.notes_add).trim(),2000);
+      if(set.status==='Dropped')v='Dropped '+date_()+' by '+u.name+': '+v;else v=date_()+' '+u.name+': '+v;
+      set.notes=((fullNotes?fullNotes+' ':'')+v).trim();}
+    if(set.status==='Dropped')need_(set.notes!=null,'Write why you drop the task (add it to the notes).');
     need_(Object.keys(set).length,'Nothing changed.');}
   Object.keys(set).forEach(k=>need_(m[k]>=0,'The Board has no '+(FIELD_LABEL[k]||k)+' column.'));
   if(set.status&&m.done>=0){if(isDoneSt_(set.status)&&!isDoneSt_(task.status))set.done=date_();
@@ -535,7 +573,9 @@ function planTask_(r,u){
   // Youssef, 14 Nov (v3.7): both founders change any shared task directly. No more requests.
   const direct=true;
   const old={title:task.title,owner:task.owner,due:task.due,product:task.product,function:task.function,notes:fullNotes,status:task.status,done:task.done_date};
+  const added=op==='edit'&&r.changes.notes_add!=null&&set.notes!=null?set.notes.slice(fullNotes?fullNotes.length+1:0):null;
   const lines=Object.keys(set).map(k=>k==='notes'&&op==='drop'?'Notes: add "Dropped '+date_()+' by '+u.name+': '+cut_(r.reason,120)+'"'
+    :k==='notes'&&added!=null?'Notes: add "'+cut_(added,160)+'"'
     :(FIELD_LABEL[k]||k)+': '+(cut_(old[k],80)||'(empty)')+' → '+(cut_(set[k],80)||'(empty)'));
   if(pipe){lines.push('Pipeline · '+pipe.product+': Last updated → '+date_());
     if(pipe.set.next)lines.push('Pipeline · '+pipe.product+': Next step "'+cut_(pipe.old.next,80)+'" → "'+pipe.set.next+'" (old text kept in Notes)');
@@ -558,6 +598,7 @@ function applyPlan_(p,u,via){
   if(!p.which)snapPatch_(p.task.title,{title:p.set.title||p.task.title,status:p.set.status||p.task.status,owner:p.set.owner||p.task.owner,due:p.set.due!=null?p.set.due:iso_(p.task.due),lead:isLead_(p.set.function!=null?p.set.function:p.task.function)});
   const who=via?u.name+' (approved '+via.replace('request from ','')+"'s change)":u.name,title=p.task.title;
   const parts=[];['title','owner','due','product','function'].forEach(k=>{if(p.set[k]!=null)parts.push((FIELD_LABEL[k]||k).toLowerCase()+' → '+(p.set[k]||'(empty)'));});
+  if(p.op==='edit'&&p.set.status!=null)parts.push('status → '+p.set.status);
   if(p.op==='edit'&&p.set.notes!=null)parts.push('notes');
   const text=p.op==='drop'?who+' dropped "'+title+'"'
     :p.op==='status'?who+' marked "'+title+'" '+p.set.status

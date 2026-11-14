@@ -198,7 +198,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 const API_URL = 'https://script.google.com/macros/s/AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA/exec';
 /* ======================================================================================== */
 
-const APP_VERSION=3.7; // raise with every release; the server (Code.js VERSION) should match
+const APP_VERSION=3.8; // raise with every release; the server (Code.js VERSION) should match
 const $=id=>document.getElementById(id);
 let SERVER_V=0;
 const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
@@ -339,7 +339,7 @@ async function runReview(id,fromSave){
     openReview(res.capture);}
   catch(e){progressFail(e.message);upsertErr(id,e.message);}
 }
-const DEST={board_task:'Board task',supplier:'Supplier',inventory_change:'Inventory (handoff)',decision_log_candidate:'Decision (handoff)',fill_backlog:'Fill Backlog (handoff)',handbook_note:'Handbook (handoff)',inbox_only:'Stays in Inbox'};
+const DEST={board_task:'Board task',task_update:'Change a Board task',supplier:'Supplier',inventory_change:'Inventory (handoff)',decision_log_candidate:'Decision (handoff)',fill_backlog:'Fill Backlog (handoff)',handbook_note:'Handbook (handoff)',inbox_only:'Stays in Inbox'};
 const KIND={task:'Task',supplier_contact:'Supplier',issue:'Issue',purchase:'Purchase',price:'Price',idea:'Idea',note:'Note',decision_candidate:'Decision'};
 const FINAL=['saved','rejected','uncertain'];
 // Items that only stayed in the Inbox can be reviewed again (for example to send them to the Board).
@@ -356,12 +356,42 @@ function openReview(arg){const multi=Array.isArray(arg),caps=(multi?arg:[arg]).f
      return `<div class="sub" style="margin-top:12px">${multi?esc(c.owner)+' · '+fmtTime(c.created)+' · ':''}${esc(w.slice(0,240))}</div>`+show(c).map(propHTML).join('');}).join('')}
    <div class="btns"><button class="btn ghost" id="rClose">Later</button><button class="btn" id="rApply" ${open?'':'disabled'}>Apply</button></div>`);
   const pick=(id,v)=>{reviewing.choice[id]=v;const seg=$('sheetIn').querySelector(`.seg[data-id="${id}"]`);if(seg)seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));};
-  $('sheetIn').querySelectorAll('.dsel').forEach(sel=>sel.onchange=()=>{$('sheetIn').querySelectorAll(`.dst[data-id="${sel.dataset.id}"]`).forEach(b=>b.hidden=b.dataset.dst!==sel.value);fillSimilar();});
+  $('sheetIn').querySelectorAll('.dsel').forEach(sel=>sel.onchange=()=>{$('sheetIn').querySelectorAll(`.dst[data-id="${sel.dataset.id}"]`).forEach(b=>b.hidden=b.dataset.dst!==sel.value);fillSimilar();if(sel.value==='task_update')changePreview(sel.dataset.id);});
+  $('sheetIn').querySelectorAll('[data-c]').forEach(el=>el.onchange=()=>changePreview(el.dataset.id));
   $('sheetIn').querySelectorAll('.seg').forEach(seg=>seg.onclick=e=>{const v=e.target.dataset.v;if(v)pick(seg.dataset.id,v);});
   $('sheetIn').querySelectorAll('input[data-f="title"]').forEach(i=>i.onchange=fillSimilar);
   $('sheetIn').onclick=e=>{const b=e.target.closest('[data-same]');if(b){pick(b.dataset.same,'reject');toast('Marked: already on the Board. It will not be added.');}};
   $('rClose').onclick=closeSheet;$('rApply').onclick=applyReview;
-  if(BOARD)fillSimilar();else loadBoard().then(fillSimilar);}
+  const after=()=>{fillSimilar();fillChange();};if(BOARD&&!BOARD.which)after();else loadBoardShared().then(after);}
+// v3.8: "Change a Board task". The task list comes from the shared Board (Youssef: a Strategy task found by the sorter stays in the list).
+async function loadBoardShared(){if(!(ME&&ME.admin&&BWHICH))return loadBoard();
+  try{SHARED=await call('board',{which:''},60000);}catch(e){toast('Board: '+e.message);}}
+let SHARED=null;
+function shared(){if(BOARD&&!BOARD.which)return BOARD;if(SHARED)return SHARED;try{return JSON.parse(LS.get('krude_board')||'null');}catch(e){return null;}}
+function fillChange(){const b=shared();if(!$('sheetIn')||!b)return;
+  $('sheetIn').querySelectorAll('select.tref').forEach(sel=>{const cur=sel.dataset.ref,curT=sel.dataset.task;
+    const open=b.tasks.filter(t=>!isDone(t)).sort((p,q)=>p.title.localeCompare(q.title));
+    const opts=[`<option value="">— Pick the task —</option>`];
+    if(cur&&cur[0]==='S')opts.push(`<option value="${esc(cur)}" data-t="${esc(curT)}" selected>(Strategy) ${esc(curT)}</option>`);
+    open.forEach(t=>{const r='B'+t.row;opts.push(`<option value="${r}" data-t="${esc(t.title)}" ${r===cur&&t.title===curT?'selected':''}>${esc(t.title)}${t.owner?' · '+esc(t.owner):''}</option>`);});
+    if(cur&&cur[0]==='B'&&!open.some(t=>'B'+t.row===cur&&t.title===curT))opts.push(`<option value="${esc(cur)}" data-t="${esc(curT)}" selected>${esc(curT)}</option>`);
+    sel.innerHTML=opts.join('');});
+  $('sheetIn').querySelectorAll('select.tst').forEach(sel=>{const v=sel.dataset.v,list=b.statuses.concat(b.statuses.some(s=>/^dropped$/i.test(s))?[]:['Dropped']);
+    if(v&&!list.includes(v))list.push(v);sel.innerHTML=`<option value="">No change</option>`+list.map(s=>`<option ${s===v?'selected':''}>${esc(s)}</option>`).join('');});
+  $('sheetIn').querySelectorAll('.tprev').forEach(box=>{if(!box.closest('[hidden]'))changePreview(box.dataset.id);});}
+function changeOf(id){const g=k=>{const el=$('sheetIn').querySelector(`[data-c="${k}"][data-id="${id}"]`);return el?el.value.trim():'';};
+  const sel=$('sheetIn').querySelector(`select.tref[data-id="${id}"]`),o=sel&&sel.selectedOptions[0];
+  return {ref:g('ref'),task:o&&o.dataset.t||'',status:g('status'),due_date:g('due_date'),owner:g('owner'),title:g('title'),notes_add:g('notes_add')};}
+// Same preview as the Board tab (task_change with dry:true). Nothing is written here.
+async function changePreview(id){const box=$('sheetIn')&&$('sheetIn').querySelector(`.tprev[data-id="${id}"]`);if(!box||box.closest('[hidden]'))return;
+  const v=changeOf(id);if(!v.ref){box.innerHTML='<div class="why">Pick the task this capture changes.</div>';return;}
+  const changes={};if(v.status)changes.status=v.status;if(v.due_date)changes.due=v.due_date;if(v.owner)changes.owner=v.owner;if(v.title)changes.title=v.title;if(v.notes_add)changes.notes_add=v.notes_add;
+  if(!Object.keys(changes).length){box.innerHTML='<div class="why">Fill at least one change.</div>';return;}
+  const tag=JSON.stringify([v,changes]);box.dataset.tag=tag;box.innerHTML='<div class="why">Checking the Board…</div>';
+  try{const p=await call('task_change',{dry:true,row:Number(v.ref.slice(1)),title:v.task,board:v.ref[0]==='S'?'strategy':'',op:'edit',changes},60000);
+    if(box.dataset.tag!==tag)return;
+    box.innerHTML=`<div class="lbl">Approve will change</div><div class="card" style="padding:10px;margin:0">${p.plan.map(l=>`<p dir="auto" style="margin:3px 0">${esc(l)}</p>`).join('')}</div>`;}
+  catch(e){if(box.dataset.tag===tag)box.innerHTML=`<div class="banner err" style="margin:8px 0 0">${esc(e.message)}</div>`;}}
 // "Similar task on the Board": open tasks that share at least 2 key words and half of the shorter title.
 const STOPW=new Set('the and for with from into this that are was its our your their next new get make set have has will then also some all any about after before'.split(' '));
 const toks=s=>new Set(String(s||'').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu,' ').split(/\s+/).filter(w=>w.length>2&&!STOPW.has(w)).map(w=>w.replace(/(ing|es|s)$/,'')));
@@ -374,13 +404,18 @@ function fillSimilar(){if(!$('sheetIn'))return;$('sheetIn').querySelectorAll('.s
     <div class="row"><button class="btn small ghost" data-same="${esc(id)}">Same task: do not add</button></div></div>`:'';});}
 async function applyReview(){
   if(!Object.keys(reviewing.choice).length)return toast('Tap Approve, Keep or Reject on an item first. Items you do not touch stay "To review".');
-  $('rApply').disabled=true;$('rApply').textContent='Saving…';
-  const byCap={};
+  const byCap={},noTask=[];
   Object.entries(reviewing.choice).forEach(([id,decision])=>{const c=reviewing.caps.find(c=>c.items.some(i=>i.id===id));if(!c)return;
     const x=c.items.find(i=>i.id===id),edits={fields:{}};let changed=false;
     $('sheetIn').querySelectorAll(`[data-id="${id}"][data-f]`).forEach(el=>{if(el.closest('[hidden]'))return;const k=el.dataset.f,v=el.value;
       if(k==='summary'||k==='destination'){if(v!==x[k]){edits[k]=v;changed=true;}}else if(v!==(x.fields[k]||'')){edits.fields[k]=v;changed=true;}});
+    const dsel=$('sheetIn').querySelector(`.dsel[data-id="${id}"]`);
+    if(dsel&&dsel.value==='task_update'&&$('sheetIn').querySelector(`select.tref[data-id="${id}"]`)){const v=changeOf(id),old=x.change||{};
+      if(decision==='confirm'&&!v.ref)noTask.push(x.summary);
+      if(['ref','task','status','due_date','owner','title','notes_add'].some(k=>v[k]!==(old[k]||''))){edits.change=v;changed=true;}}
     (byCap[c.id]=byCap[c.id]||[]).push(Object.assign({id,decision,revision:x.revision},changed&&decision!=='reject'?{edits}:{}));});
+  if(noTask.length)return toast('Pick the Board task for: '+noTask[0]);
+  $('rApply').disabled=true;$('rApply').textContent='Saving…';
   let bad=0;const fail=[];
   for(const [cid,decisions] of Object.entries(byCap)){
     try{const res=await call('confirm',{capture_id:cid,decisions},180000);upsert(res.capture);bad+=res.results.filter(r=>r.status==='uncertain').length;}
@@ -391,10 +426,20 @@ function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'
   const sel=(k,opts)=>`<select data-f="${k}" data-id="${x.id}"><option value="">—</option>${opts.map(o=>`<option ${f[k]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
   const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?sel('owner',['Youssef','Ahmad']):k==='function'?sel('function',fns()):`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
   let extra='';
-  if(!done){const base=['board_task','supplier','inbox_only'],dsts=base.includes(x.destination)?base:base.concat([x.destination]);
+  if(!done){const base=['board_task','task_update','supplier','inbox_only'],ch=x.change||{},dsts=base.includes(x.destination)?base:base.concat([x.destination]);
     extra=`<div class="lbl">Goes to</div><select class="dsel" data-f="destination" data-id="${x.id}">${dsts.map(d=>`<option value="${d}" ${x.destination===d?'selected':''}>${esc(DEST[d]||d)}</option>`).join('')}</select>
     <div class="dst" data-dst="board_task" data-id="${x.id}" ${x.destination==='board_task'?'':'hidden'}><div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title||x.summary)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}${fld('product','Product')}${fld('function','Function')}</div>
       <div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.${ME.admin?' Function Leadership goes to your private Strategy Board.':''}</div><div class="sim" data-id="${x.id}"></div></div>
+    <div class="dst" data-dst="task_update" data-id="${x.id}" ${x.destination==='task_update'?'':'hidden'}>
+      <div class="lbl">Which task</div><select class="tref" data-c="ref" data-id="${x.id}" data-ref="${esc(ch.ref||'')}" data-task="${esc(ch.task||'')}"><option value="">Loading the Board…</option></select>
+      <div class="grid">
+        <div><div class="lbl" style="margin-top:4px">New status</div><select class="tst" data-c="status" data-id="${x.id}" data-v="${esc(ch.status||'')}"><option value="">No change</option></select></div>
+        <div><div class="lbl" style="margin-top:4px">New due</div><input data-c="due_date" data-id="${x.id}" type="date" value="${esc(ch.due_date||'')}"></div>
+        <div><div class="lbl" style="margin-top:4px">New owner</div><select data-c="owner" data-id="${x.id}">${['','Youssef','Ahmad'].map(o=>`<option value="${o}" ${(ch.owner||'')===o?'selected':''}>${o||'No change'}</option>`).join('')}</select></div>
+        <div><div class="lbl" style="margin-top:4px">New title</div><input data-c="title" data-id="${x.id}" dir="auto" placeholder="No change" value="${esc(ch.title||'')}"></div>
+      </div>
+      <div class="lbl">Add to notes</div><input data-c="notes_add" data-id="${x.id}" dir="auto" placeholder="Nothing to add" value="${esc(ch.notes_add||'')}">
+      <div class="tprev" data-id="${x.id}"></div></div>
     <div class="dst" data-dst="supplier" data-id="${x.id}" ${x.destination==='supplier'?'':'hidden'}><div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div></div>`;}
   const approve=x.can_confirm?'Approve':'To Youssef';
   return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)}${done?' → '+esc(DEST[x.destination]||x.destination):''}${reKeep(x)&&!done?' · now kept in Inbox':''}</span>
@@ -521,7 +566,6 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
     <div class="lbl">Status</div>
     <div class="row">${BOARD.statuses.filter(s=>!/^dropped$/i.test(s)).map(s=>`<button class="chip ${s===t.status?'on':''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
     <div class="row" style="margin-top:14px"><button class="btn small ghost" id="tEditB">Edit task</button>${/^dropped$/i.test(String(t.status||"").trim())?'':'<button class="btn small ghost" id="tDropB">Drop task</button>'}<button class="btn small ghost" id="tClose">Close</button></div>
-    ${mine?'':'<p class="who" style="margin-top:10px">This is not your task. Your change goes to Youssef to approve.</p>'}
     <div id="tWork"></div></div>`);
   $('tClose').onclick=closeSheet;
   $('sheetIn').querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{if(b.dataset.s===t.status)return;
@@ -532,7 +576,7 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
         <div><div class="lbl" style="margin-top:4px">Owner</div><select id="eOwner">${['Youssef','Ahmad'].map(o=>`<option ${t.owner===o?'selected':''}>${o}</option>`).join('')}${['Youssef','Ahmad'].includes(t.owner)?'':`<option selected value="">${esc(t.owner||'—')}</option>`}</select></div>
         <div><div class="lbl" style="margin-top:4px">Due</div><input id="eDue" type="date" value="${esc(isoDue(t.due))}"></div>
         <div><div class="lbl" style="margin-top:4px">Product</div><input id="eProduct" dir="auto" value="${esc(t.product)}"></div>
-        <div><div class="lbl" style="margin-top:4px">Function</div><select id="eFunction">${fnl.map(f=>`<option value="${esc(f)}" ${t.function===f?'selected':''}>${esc(f||'—')}</option>`).join('')}${fns.includes(t.function)?'':`<option selected value="${esc(t.function)}">${esc(t.function)}</option>`}</select></div>
+        <div><div class="lbl" style="margin-top:4px">Function</div><select id="eFunction">${fnl.map(f=>`<option value="${esc(f)}" ${t.function===f?'selected':''}>${esc(f||'—')}</option>`).join('')}${fns().includes(t.function)||!t.function?'':`<option selected value="${esc(t.function)}">${esc(t.function)}</option>`}</select></div>
       </div></div>
       <div class="lbl">Notes</div><textarea id="eNotes" dir="auto">${esc(t.notes)}</textarea>
       <div style="margin-top:10px"><button class="btn" id="eGo">Preview changes</button></div>`;
