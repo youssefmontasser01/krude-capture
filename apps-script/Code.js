@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.9;
+const VERSION=4.0;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -21,7 +21,7 @@ const CFG = Object.freeze({
   PRICES:{'gpt-4o-mini-transcribe':{min:0.003},'gpt-4o-transcribe':{min:0.006},'whisper-1':{min:0.006},
     'gpt-4.1-mini':{in:0.40,out:1.60},'gpt-4.1':{in:2.00,out:8.00},'gpt-4.1-nano':{in:0.10,out:0.40}}
 });
-const DESTS=['board_task','task_update','supplier','inventory_change','decision_log_candidate','fill_backlog','handbook_note','inbox_only'];
+const DESTS=['board_task','task_update','supplier','idea','inventory_change','decision_log_candidate','fill_backlog','handbook_note','inbox_only'];
 const KINDS=['task','supplier_contact','issue','purchase','price','idea','note','decision_candidate'];
 const FIELD_NAMES=['title','product','owner','due_date','function','name','phone','sells','price','place','notes','category','pin']; // v3.9: category, pin (suppliers)
 // v3.8: a capture can change an existing Board task (destination task_update). ref = "B<row>" (Board v2) or "S<row>" (Strategy Board, Youssef only).
@@ -141,6 +141,8 @@ function doPost(e){try{
  if(r.action==='reports')return json_({ok:true,...reports_(u)});
  if(r.action==='activity')return json_({ok:true,...activity_(u)});
  if(r.action==='lists')return json_({ok:true,...lists_(r)});
+ if(r.action==='idea_list')return json_({ok:true,...ideaList_(u)});
+ if(r.action==='idea_change')return json_({ok:true,...ideaChange_(r,u)});
  if(r.action==='suppliers')return json_({ok:true,...suppliers_(u)});
  if(r.action==='supplier_change')return json_({ok:true,...supplierChange_(r,u)});
  if(r.action==='category')return json_({ok:true,...categoryChange_(r,u)});
@@ -299,6 +301,7 @@ function sortItems_(c){
     'If you are not sure which task it is, leave change.ref empty; the founder picks it. Do not also make a new board_task for the same thing. For every other item, all change fields are empty strings. '+
     'Suppliers (kind supplier_contact, destination supplier): name, phone, sells, place as said; category only when the capture names a trade that matches one of supplier_categories exactly, else empty; '+
     'pin = a Google Maps link (or a website link) from the capture or photo links text, else empty. A capture that is only a place or a map pin with a shop name is a supplier_contact with an empty phone. '+
+    'An idea (a thought about a product, design, offer or way to work that nobody must do now) is kind idea, destination idea: title = the idea in a few words, notes = the rest, product only if named. '+
     'Board tasks: product only if the capture names a KRUDE product; function from the fixed list or empty; owner and due_date only if said, never guessed. '+
     'Use entry_id "'+c.id+'" for every item. Photos are attached as links only; do not describe them.\nRules:\n'+rules;
   const capture={entry_id:c.id,from:c.owner,date:date_(),type_hint:c.hint,typed_text:c.text,voice_text:c.transcript,photo_links:c.photos.map(p=>p.url)};
@@ -331,6 +334,7 @@ function validateItem_(x,cid,owner){need_(x&&typeof x==='object','Invalid item.'
     if(!/^[BS]\d{1,6}$/.test(v.ref)||(v.ref[0]==='S'&&owner!=='Youssef')||!v.task){v.ref='';v.task='';}
     if(!OWNERS.includes(v.owner))v.owner='';if(v.due_date&&!/^\d{4}-\d{2}-\d{2}$/.test(v.due_date))v.due_date='';}
   if(x.kind==='decision_candidate')x.destination='decision_log_candidate';
+  if(x.kind==='idea'&&x.destination==='inbox_only'&&x.operation==='create')x.destination='idea'; // v4.0: ideas go to "22 - Ideas" when approved
   if(x.destination==='board_task')need_(x.fields.title.trim(),'Task needs a title.');
   if(x.fields.pin&&!/^https?:\/\/\S+$/i.test(x.fields.pin.trim()))x.fields.pin='';
   if(x.fields.category){let c=null;try{c=catList_().find(n=>catKey_(n)===catKey_(x.fields.category));}catch(e){}x.fields.category=c&&catKey_(c)!==catKey_(NO_CAT)?c:'';}
@@ -353,9 +357,10 @@ function cleanCell_(x){x=String(x||'');return /^[=+\-@\t\r]/.test(x)?"'"+x:x;}
 function norm_(x){return String(x||'').trim().toLowerCase().replace(/[\s_\-]+/g,' ');}
 function isDuplicate_(t,value,aliases){const col=t.headers.findIndex(h=>aliases.includes(norm_(h)));need_(col>=0,'A required sheet header is missing. Use a handoff.');
   if(t.last_row<2)return false;return t.sheet.getRange(2,col+1,t.last_row-1,1).getDisplayValues().some(r=>norm_(r[0])===norm_(value));}
-function route_(x){if(x.destination==='task_update')return 'task_update';return x.operation==='update'||x.existing_record||!['board_task','supplier','inbox_only'].includes(x.destination)?'handoff':x.destination;}
+function route_(x){if(x.destination==='task_update')return 'task_update';if(x.destination==='idea')return 'idea';return x.operation==='update'||x.existing_record||!['board_task','supplier','inbox_only'].includes(x.destination)?'handoff':x.destination;}
 function append_(c,x,u){const marker='[capture-item:'+x.id+']';let dest=route_(x);
  if(dest==='inbox_only')return 'Kept in Inbox';
+ if(dest==='idea')return ideaFromCapture_(c,x,marker);
  // v3.8: change an existing task with the same plan, write and read-back as the Board tab.
  if(dest==='task_update'){const v=x.change||{};need_(v.ref&&v.task,'Pick the Board task first.');
    const which=v.ref[0]==='S'?STRAT:'',changes={};
@@ -419,6 +424,7 @@ function confirm_(r,u){need_(Array.isArray(r.decisions)&&r.decisions.length<=60,
    try{x.result=append_(c,x,u);x.status='saved';
      const t=x.result==='Saved to Strategy Board'?{vis:['Youssef'],text:u.name+' added to the Strategy Board: '+x.fields.title}
        :x.result==='Saved to Board Tasks'?{vis:'all',title:x.fields.title,text:u.name+' added to the Board: '+x.fields.title+(x.fields.owner?' ('+x.fields.owner+')':'')}
+       :x.result==='Saved to Ideas'?{vis:'all',text:u.name+' added an idea: '+(x.fields.title||x.summary)}
        :x.result==='Saved to Suppliers and Contacts'?{vis:'all',text:u.name+' added a supplier: '+x.fields.name}
        :x.result==='Sent as handoff'?{vis:[c.owner],text:u.name+' sent to ChatGPT (handoff): '+x.summary}:null;
      if(t)emit_([Object.assign({by:u.name,kind:'board',cid:c.id},t)]);}
@@ -936,3 +942,143 @@ function importBackfillSuppliers_(sheetId){
     const msg='Import done on "'+ss.getName()+'": '+add.length+' added, '+merged+' merged ('+mergedCells.length+' empty cells filled on Electrocenter: '+(mergedCells.map(c=>c.k).join(', ')||'none')+'). CSV rows: '+rows.length+'. Expected: 92 added, 1 merged.';
     console.log(msg);return {added:add.length,merged:merged};}
   finally{lock.releaseLock();}}
+
+/* ---------- 9. Ideas (v4.0, Youssef 14 Nov): "22 - Ideas" is the one source of truth ---------- */
+// All ideas are shared. Youssef can mark his own ideas Private (Ahmad never sees them). Both founders add and edit any idea they see.
+// Status: New · Exploring · In design (adds a product row in Board › Pipeline, Stage Design) · Parked (soon; optional "Look again on")
+// · Dropped (bad; reason needed) · Graveyard (maybe never). Hidden by default: Dropped, Graveyard. Delete forever: both, type DELETE.
+// Jam list: "On jam list" in the Jam column. An outcome (any status) takes the idea off the jam list.
+// Every change: preview (dry) -> write in the lock -> read back by ID.
+const IDEA_COLS=['Date','Idea','Notes','Product','Owner','Private','Jam','Status','Status note','Status by','Status date','Look again on','Pipeline product','Source','ID'];
+const IDEA_KEY={date:'date',title:'idea',notes:'notes',product:'product',owner:'owner',private:'private',jam:'jam',status:'status',status_note:'status note',
+  status_by:'status by',status_date:'status date',look_again:'look again on',pipeline:'pipeline product',source:'source',id:'id'};
+const IDEA_STATUS=['New','Exploring','In design','Parked','Dropped','Graveyard'];
+const JAM_ON='On jam list',IDEA_IMPORT='Import: capture';
+const isPriv_=v=>/^(yes|true|private|y)$/i.test(String(v||'').trim());
+function ideaBook_(id){id=id||props_().getProperty('IDEAS_SHEET_ID');need_(id,'Ideas sheet missing. Youssef: run setupV40 in Apps Script.');return SpreadsheetApp.openById(id);}
+function ideaEnsure_(ss){const t=ss.getSheets()[0];let w=t.getLastColumn();
+  if(w<1){t.getRange(1,1,1,IDEA_COLS.length).setValues([IDEA_COLS]);t.setFrozenRows(1);SpreadsheetApp.flush();return;}
+  const h=t.getRange(1,1,1,w).getDisplayValues()[0],add=IDEA_COLS.filter(n=>!h.some(x=>norm_(x)===norm_(n)));
+  if(add.length){t.getRange(1,w+1,1,add.length).setValues([add]);SpreadsheetApp.flush();}}
+function ideaRead_(ss){const t=ss.getSheets()[0],n=t.getLastRow(),w=Math.max(t.getLastColumn(),1),v=t.getRange(1,1,Math.max(n,1),w).getDisplayValues(),m={};
+  Object.keys(IDEA_KEY).forEach(k=>m[k]=v[0].findIndex(x=>norm_(x)===norm_(IDEA_KEY[k])));
+  const rows=[];for(let i=1;i<v.length;i++){const r=v[i];if(!r.some(x=>String(x).trim()))continue;const o={row:i+1};
+    Object.keys(IDEA_KEY).forEach(k=>o[k]=m[k]>=0?String(r[m[k]]).trim():'');if(!o.status)o.status='New';rows.push(o);}
+  return {sheet:t,m:m,w:w,rows:rows};}
+const ideaSees_=(u,x)=>u.admin||!isPriv_(x.private);
+function ideaPublic_(x){return {id:x.id,date:x.date,title:x.title,notes:x.notes.slice(0,4000),product:x.product,owner:x.owner,private:isPriv_(x.private),
+  jam:x.jam===JAM_ON,status:x.status,status_note:x.status_note,status_by:x.status_by,status_date:x.status_date,look_again:x.look_again,pipeline:x.pipeline,source:x.source};}
+function ideaList_(u){const ss=ideaBook_();let d=ideaRead_(ss);
+  if(d.m.id<0||d.rows.some(x=>!x.id)){lock_(()=>{ideaEnsure_(ss);const e=ideaRead_(ss);e.rows.forEach(x=>{if(!x.id)e.sheet.getRange(x.row,e.m.id+1).setValue(ideaNewId_());});SpreadsheetApp.flush();});d=ideaRead_(ss);}
+  let products=[];try{products=table_(CFG.BOARD_SHEET_ID,'Pipeline').rows.map(r=>r[0]).filter(Boolean);}catch(e){}
+  return {ideas:d.rows.filter(x=>ideaSees_(u,x)).map(ideaPublic_),statuses:IDEA_STATUS,products:products,can_private:!!u.admin,today:date_()};}
+function ideaNewId_(){return 'idea_'+Utilities.getUuid().replace(/-/g,'').slice(0,12);}
+// Board › Pipeline: a new product row for "In design". Stage must be a value the sheet allows.
+function pipeAdd_(r,u){const s=SpreadsheetApp.openById(CFG.BOARD_SHEET_ID).getSheetByName('Pipeline');need_(s,'The Board has no Pipeline tab.');
+  const w=s.getLastColumn(),h=s.getRange(1,1,1,w).getDisplayValues()[0],c=n=>h.findIndex(x=>n.includes(norm_(x)));
+  const m={product:c(['product']),stage:c(['stage']),owner:c(['owner']),next:c(['next step']),updated:c(['last updated','updated']),notes:c(['notes'])};
+  need_(m.product>=0&&m.stage>=0,'Pipeline needs Product and Stage columns.');
+  const name=short_(String(r.name||'').trim(),100);need_(name,'Write the product name.');
+  const owner=String(r.owner||'');need_(!owner||OWNERS.includes(owner),'The owner must be Youssef or Ahmad.');
+  const next=short_(String(r.next||'').trim(),500);
+  const n=s.getLastRow(),names=n>1?s.getRange(2,m.product+1,n-1,1).getDisplayValues().map(x=>norm_(x[0])):[];
+  need_(!names.includes(norm_(name)),'"'+name+'" is already a product in the Pipeline. Pick another name.');
+  let stage='Design';try{const rule=s.getRange(2,m.stage+1).getDataValidation();
+    if(rule&&rule.getCriteriaType()===SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST){const L=(rule.getCriteriaValues()[0]||[]).map(String),f=L.find(x=>norm_(x)==='design');
+      need_(f,'Pipeline Stage has no "Design" value. Add it to the Stage list in the sheet first.');stage=f;}}catch(e){if(/Design/.test(e.message))throw e;}
+  const set={product:name,stage:stage,owner:owner,next:next,updated:date_()};
+  return {s:s,m:m,set:set,lines:['Pipeline: new product "'+name+'" · Stage '+stage+(owner?' · Owner '+owner:'')+(next?' · Next step: '+cut_(next,80):'')]};}
+function pipeWrite_(p,ideaTitle){const vals=new Array(p.s.getLastColumn()).fill('');Object.keys(p.set).forEach(k=>{if(p.m[k]>=0)vals[p.m[k]]=supCell_(p.set[k]);});
+  if(p.m.notes>=0)vals[p.m.notes]=supCell_('From idea: '+ideaTitle+' ('+date_()+')');
+  const row=p.s.getLastRow()+1;p.s.getRange(row,1,1,vals.length).setValues([vals]);SpreadsheetApp.flush();
+  need_(String(p.s.getRange(row,p.m.product+1).getDisplayValue()).trim()===p.set.product,'Not verified: the Pipeline row did not save. Check the Board.');}
+function ideaPlan_(r,u,ss){const op=String(r.op||'');need_(['add','edit','jam','status','delete'].includes(op),'Invalid change.');
+  const d=ideaRead_(ss),old=op==='add'?null:d.rows.find(x=>x.id===String(r.id||''));
+  if(op!=='add')need_(old&&ideaSees_(u,old),'This idea is not in the sheet any more. Refresh.');
+  const f=r.fields&&typeof r.fields==='object'?r.fields:{},set={},lines=[];let pipe=null,del=false;
+  const label={title:'Idea',notes:'Notes',product:'Product',private:'Private',jam:'Jam',status:'Status',status_note:'Status note',look_again:'Look again on',pipeline:'Pipeline product'};
+  const shareLine=()=>{if(old&&isPriv_(old.private)){set.private='';lines.push('Private → shared (Ahmad will see it)');}};
+  if(op==='add'||op==='edit'){['title','notes','product'].forEach(k=>{if(f[k]==null)return;const v=short_(String(f[k]).trim(),k==='notes'?4000:300);
+      if(old&&r.seen&&r.seen[k]!=null&&String(r.seen[k]).trim()!==old[k])need_(false,'This idea changed in the sheet. Refresh and try again.');
+      if(!old||v!==old[k])set[k]=v;});
+    if(f.private!=null){const v=f.private?'Yes':'',was=old&&isPriv_(old.private)?'Yes':'';
+      if(v!==was){need_(u.admin,'Only Youssef can make an idea private.');need_((old?old.owner:u.name)==='Youssef','Only Youssef\'s own ideas can be private.');
+        need_(!v||!old||(old.jam!==JAM_ON&&old.status!=='In design'),'An idea on the jam list or in design is shared.');set.private=v;}}
+    const title=set.title!=null?set.title:old?old.title:'';need_(title,'Write the idea.');
+    if(op==='add'){Object.assign(set,{date:date_(),owner:u.name,status:'New',source:'App '+date_()+' '+u.name,id:ideaNewId_()});
+      lines.push('New idea: '+cut_(title,120)+(set.private?' (private)':''));['notes','product'].forEach(k=>{if(set[k])lines.push(label[k]+': '+cut_(set[k],120));});}
+    else{need_(Object.keys(set).length,'Nothing changed.');Object.keys(set).forEach(k=>lines.push(label[k]+': '+(cut_(k==='private'?(old.private?'Yes':''):old[k],80)||'(empty)')+' → '+(cut_(set[k],80)||'(empty)')));}}
+  if(op==='jam'){const on=r.value==='add';need_(on!==(old.jam===JAM_ON),on?'It is already on the jam list.':'It is not on the jam list.');
+    set.jam=on?JAM_ON:'';lines.push(on?'Add to the jam list':'Take off the jam list');if(on)shareLine();}
+  if(op==='status'){const st=String(r.status||'');need_(IDEA_STATUS.includes(st),'Invalid status.');
+    const note=short_(String(r.note||'').trim(),1000);if(st==='Dropped')need_(note,'Write why you drop the idea.');
+    const la=String(r.look_again||'').trim();need_(st!==old.status||note||(st==='Parked'&&la!==old.look_again),'No change.');
+    Object.assign(set,{status:st,status_note:note,status_by:u.name,status_date:date_()});
+    if(old.jam===JAM_ON){set.jam='';lines.push('Discussed: off the jam list');}
+    lines.push('Status: '+old.status+' → '+st+(note?' · "'+cut_(note,100)+'"':''));
+    if(st==='Parked'){need_(!la||/^\d{4}-\d{2}-\d{2}$/.test(la),'The date must be YYYY-MM-DD.');if(la!==old.look_again){set.look_again=la;if(la)lines.push('Look again on '+la+' (it comes back on the jam list)');}}
+    else if(old.look_again)set.look_again='';
+    if(st==='In design'){need_(!old.pipeline,'This idea is already in the Pipeline as "'+old.pipeline+'".');pipe=pipeAdd_(r.pipeline||{},u);set.pipeline=pipe.set.product;lines.push.apply(lines,pipe.lines);shareLine();}}
+  if(op==='delete'){del=true;lines.push('Delete forever: "'+cut_(old.title,100)+'" (row '+old.row+'). This cannot be undone.');}
+  Object.keys(set).forEach(k=>need_(d.m[k]>=0,'The Ideas sheet has no '+(label[k]||IDEA_KEY[k])+' column. Run setupV40.'));
+  return {op:op,d:d,old:old,set:set,pipe:pipe,del:del,lines:lines};}
+function ideaChange_(r,u){const ss=ideaBook_();
+  if(r.dry){const p=lock_(()=>{ideaEnsure_(ss);return ideaPlan_(r,u,ss);});return {plan:p.lines};}
+  lock_(()=>{ideaEnsure_(ss);const p=ideaPlan_(r,u,ss),t=p.d.sheet,m=p.d.m,id=p.old?p.old.id:p.set.id,title=p.set.title||(p.old&&p.old.title)||'';
+    if(p.del){const before=ideaRead_(ss).rows.filter(x=>x.id===id).length;need_(before===1,'The Ideas sheet changed. Refresh.');
+      if(t.getMaxRows()-1<=t.getFrozenRows())t.insertRowsAfter(t.getMaxRows(),1);t.deleteRow(p.old.row);SpreadsheetApp.flush();
+      need_(!ideaRead_(ss).rows.some(x=>x.id===id),'Not verified: the idea is still in the sheet.');}
+    else{if(p.pipe)pipeWrite_(p.pipe,title);
+      if(p.op==='add'){const vals=new Array(p.d.w).fill('');Object.keys(p.set).forEach(k=>vals[m[k]]=supCell_(p.set[k]));t.getRange(t.getLastRow()+1,1,1,p.d.w).setValues([vals]);}
+      else Object.keys(p.set).forEach(k=>t.getRange(p.old.row,m[k]+1).setValue(supCell_(p.set[k])));
+      SpreadsheetApp.flush();
+      const back=ideaRead_(ss).rows.find(x=>x.id===id);need_(back,'Not verified: the idea was not found after the write. Check the sheet.');
+      Object.keys(p.set).forEach(k=>{const want=String(p.set[k]).trim();need_(back[k]===want||(k==='status'&&!want&&back[k]==='New'),'Not verified: '+k+' did not save. Check the sheet.');});}
+    console.log('Idea '+p.op+' '+id+' by '+u.name+': '+p.lines.join(' | '));
+    const priv=(p.old?isPriv_(p.old.private)&&p.set.private!=='':false)||(p.op==='add'&&!!p.set.private);
+    const what={add:'added an idea',edit:'changed the idea',jam:p.set.jam?'put on the jam list':'took off the jam list',delete:'deleted forever the idea',status:'set '+(p.set.status||'')+':'}[p.op];
+    emit_([{by:u.name,kind:'idea',vis:priv?['Youssef']:'all',text:u.name+' '+what+' '+cut_(title,120)+(p.pipe?' (new Pipeline product '+p.pipe.set.product+')':'')}]);});
+  return ideaList_(u);}
+// Capture: an approved idea item becomes a row. The capture-item marker in Source stops a second row.
+function ideaFromCapture_(c,x,marker){const ss=ideaBook_();ideaEnsure_(ss);const d=ideaRead_(ss);
+  if(d.rows.some(r=>r.source.includes(marker)))return 'Saved to Ideas';
+  const v={date:date_(),title:(x.fields.title||x.summary).trim(),notes:(x.fields.notes||'').trim(),product:x.fields.product||'',owner:c.owner,private:'',jam:'',status:'New',
+    source:'KRUDE Capture '+date_()+' '+c.owner+' '+marker,id:ideaNewId_()};
+  const vals=new Array(d.w).fill('');Object.keys(v).forEach(k=>{if(d.m[k]>=0)vals[d.m[k]]=supCell_(v[k]);});
+  d.sheet.getRange(d.sheet.getLastRow()+1,1,1,d.w).setValues([vals]);SpreadsheetApp.flush();
+  need_(ideaRead_(ss).rows.some(r=>r.id===v.id),'Not verified: the idea did not save. Check "22 - Ideas".');
+  return 'Saved to Ideas';}
+
+// Run ONCE after you paste v4.0: makes "22 - Ideas" in the KRUDE Operations root (or finds it) and its header row. Safe to run again.
+function setupV40(){const p=props_();let id=p.getProperty('IDEAS_SHEET_ID');
+  if(!id){const ops=DriveApp.getFolderById(CFG.OPS_FOLDER_ID),it=ops.getFilesByName('22 - Ideas');
+    if(it.hasNext())id=it.next().getId();else{const s=SpreadsheetApp.create('22 - Ideas');s.getSheets()[0].setName('Ideas');id=s.getId();DriveApp.getFileById(id).moveTo(ops);}
+    p.setProperty('IDEAS_SHEET_ID',id);}
+  lock_(()=>ideaEnsure_(ideaBook_(id)));console.log('v4.0 ideas ready: '+DriveApp.getFileById(id).getUrl());}
+// One-time import of the ideas captured before v4.0. Step 1: importIdeasOnCopy. Step 2: importIdeas.
+function importIdeas(){importIdeas_(props_().getProperty('IDEAS_SHEET_ID'));}
+function importIdeasOnCopy(){const src=DriveApp.getFileById(ideaBook_().getId());
+  const copy=src.makeCopy('TEST COPY - 22 - Ideas - '+date_(),DriveApp.getFolderById(CFG.OPS_FOLDER_ID));console.log('Copy: '+copy.getUrl());
+  importIdeas_(copy.getId());console.log('Run again on the copy: the guard must stop it.');
+  try{importIdeas_(copy.getId());console.log('FAIL: the guard did not stop the second run.');}catch(e){console.log('OK: '+e.message);}
+  console.log('Move the copy to the trash when you are done.');}
+function importIdeas_(sheetId){const ss=ideaBook_(sheetId);
+  return lock_(()=>{ideaEnsure_(ss);const d=ideaRead_(ss);
+    need_(!d.rows.some(x=>x.source.indexOf(IDEA_IMPORT)===0),'STOP: the old ideas are already in this sheet (a Source starts with "'+IDEA_IMPORT+'"). Nothing was written.');
+    const have=d.rows.map(x=>x.source).join(' '),add=[];let skip=0;
+    capFiles_('cap_').map(f=>{try{return JSON.parse(f.getBlob().getDataAsString());}catch(e){return null;}}).filter(Boolean)
+      .sort((a,b)=>a.created.localeCompare(b.created)).forEach(c=>(c.items||[]).forEach(x=>{
+        if(x.kind!=='idea'||x.status==='rejected')return;const marker='[capture-item:'+x.id+']';if(have.includes(marker)){skip++;return;}
+        const day=Utilities.formatDate(new Date(c.created),CFG.TZ,'yyyy-MM-dd'),jam=x.jam||null,f=x.fields||{};
+        add.push({date:day,title:(f.title||x.summary||'').trim(),notes:(f.notes||'').trim(),product:f.product||'',owner:c.owner,
+          // Before v4.0 an idea was private to its owner until it went on the jam list.
+          private:c.owner==='Youssef'&&!jam?'Yes':'',jam:jam&&jam.state==='open'?JAM_ON:'',status:'New',
+          status_note:jam&&jam.state==='discussed'?'Discussed on the jam list before v4.0'+(jam.discussed_by?' ('+jam.discussed_by+')':''):'',
+          status_by:jam&&jam.state==='discussed'?(jam.discussed_by||''):'',status_date:jam&&jam.discussed_at?Utilities.formatDate(new Date(jam.discussed_at),CFG.TZ,'yyyy-MM-dd'):'',
+          source:IDEA_IMPORT+' '+day+' '+c.owner+' '+marker,id:ideaNewId_()});}));
+    if(add.length)d.sheet.getRange(d.sheet.getLastRow()+1,1,add.length,d.w).setValues(add.map(v=>{const a=new Array(d.w).fill('');Object.keys(v).forEach(k=>{if(d.m[k]>=0)a[d.m[k]]=supCell_(v[k]);});return a;}));
+    SpreadsheetApp.flush();
+    const ids=new Set(add.map(v=>v.id)),got=ideaRead_(ss).rows.filter(x=>ids.has(x.id)).length;
+    need_(got===add.length,'Not verified: '+got+' of '+add.length+' ideas were found after the write. Check the sheet.');
+    console.log('Ideas import on "'+ss.getName()+'": '+add.length+' added ('+add.filter(v=>v.private).length+' private, '+add.filter(v=>v.jam).length+' on the jam list), '+skip+' already in the sheet.');
+    return {added:add.length};});}

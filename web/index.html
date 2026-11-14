@@ -191,6 +191,8 @@ body.busy #sheet .in :is(button,input,select,textarea,label,.hrow,.chip):not(.es
 
   <!-- IDEAS -->
   <section id="vIdeas" class="hide">
+    <div style="display:flex;gap:8px;margin-bottom:10px"><input id="iQ" type="search" dir="auto" placeholder="Search ideas"><button class="btn small" id="iAdd" style="flex:none">+ Idea</button></div>
+    <div class="row hscroll" id="iFilters" style="margin-bottom:4px"></div>
     <div id="iList"></div>
     <div style="text-align:center"><button class="link" id="iRefresh">Refresh</button></div>
   </section>
@@ -238,7 +240,7 @@ body.busy #sheet .in :is(button,input,select,textarea,label,.hrow,.chip):not(.es
 const API_URL = 'https://script.google.com/macros/s/AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA/exec';
 /* ======================================================================================== */
 
-const APP_VERSION=3.9; // raise with every release; the server (Code.js VERSION) should match
+const APP_VERSION=4.0; // raise with every release; the server (Code.js VERSION) should match
 const $=id=>document.getElementById(id);
 let SERVER_V=0;
 const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
@@ -379,7 +381,7 @@ async function runReview(id,fromSave){
     openReview(res.capture);}
   catch(e){progressFail(e.message);upsertErr(id,e.message);}
 }
-const DEST={board_task:'Board task',task_update:'Change a Board task',supplier:'Supplier',inventory_change:'Inventory (handoff)',decision_log_candidate:'Decision (handoff)',fill_backlog:'Fill Backlog (handoff)',handbook_note:'Handbook (handoff)',inbox_only:'Stays in Inbox'};
+const DEST={idea:'Ideas',board_task:'Board task',task_update:'Change a Board task',supplier:'Supplier',inventory_change:'Inventory (handoff)',decision_log_candidate:'Decision (handoff)',fill_backlog:'Fill Backlog (handoff)',handbook_note:'Handbook (handoff)',inbox_only:'Stays in Inbox'};
 const KIND={task:'Task',supplier_contact:'Supplier',issue:'Issue',purchase:'Purchase',price:'Price',idea:'Idea',note:'Note',decision_candidate:'Decision'};
 const FINAL=['saved','rejected','uncertain'];
 // Items that only stayed in the Inbox can be reviewed again (for example to send them to the Board).
@@ -468,7 +470,7 @@ function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'
   const sel=(k,opts)=>`<select data-f="${k}" data-id="${x.id}"><option value="">—</option>${opts.map(o=>`<option ${f[k]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
   const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?sel('owner',['Youssef','Ahmad']):k==='function'?sel('function',fns()):`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
   let extra='';
-  if(!done){const base=['board_task','task_update','supplier','inbox_only'],ch=x.change||{},dsts=base.includes(x.destination)?base:base.concat([x.destination]);
+  if(!done){const base=['board_task','task_update','idea','supplier','inbox_only'],ch=x.change||{},dsts=base.includes(x.destination)?base:base.concat([x.destination]);
     extra=`<div class="lbl">Goes to</div><select class="dsel" data-f="destination" data-id="${x.id}">${dsts.map(d=>`<option value="${d}" ${x.destination===d?'selected':''}>${esc(DEST[d]||d)}</option>`).join('')}</select>
     <div class="dst" data-dst="board_task" data-id="${x.id}" ${x.destination==='board_task'?'':'hidden'}><div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title||x.summary)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}${fld('product','Product')}${fld('function','Function')}</div>
       <div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.${ME.admin?' Function Leadership goes to your private Strategy Board.':''}</div><div class="sim" data-id="${x.id}"></div></div>
@@ -482,6 +484,8 @@ function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'
       </div>
       <div class="lbl">Add to notes</div><input data-c="notes_add" data-id="${x.id}" dir="auto" placeholder="Nothing to add" value="${esc(ch.notes_add||'')}">
       <div class="tprev" data-id="${x.id}"></div></div>
+ <div class="dst" data-dst="idea" data-id="${x.id}" ${x.destination==='idea'?'':'hidden'}><div class="lbl">Idea</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title||x.summary)}">
+      <div class="lbl">Notes</div><input data-f="notes" data-id="${x.id}" dir="auto" value="${esc(f.notes||'')}"><div class="grid">${fld('product','Product')}</div><div class="why">Approve adds it to "22 - Ideas". Both founders see it.</div></div>
     <div class="dst" data-dst="supplier" data-id="${x.id}" ${x.destination==='supplier'?'':'hidden'}><div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}
       <div><div class="lbl" style="margin-top:4px">Category</div><select data-f="category" data-id="${x.id}">${catOpts(f.category||'')}</select></div>${fld('pin','Pin (map link)','url')}</div></div>`;}
   const approve=x.can_confirm?'Approve':'To Youssef';
@@ -701,37 +705,88 @@ function openRequest(id){const q=(BOARD.requests||[]).find(x=>x.id===id);if(!q)r
   if($('qYes')){$('qYes').onclick=()=>go('approve');$('qNo').onclick=()=>go('reject');}}
 $('bRefresh').onclick=loadBoard;
 
-/* ---------- Ideas: my ideas + the shared jam list ---------- */
-let IDEAS=null;
-try{IDEAS=JSON.parse(LS.get('krude_ideas')||'null')}catch(e){}
-async function loadIdeas(){try{IDEAS=await call('ideas',{},60000);LS.set('krude_ideas',JSON.stringify(IDEAS));renderIdeas();}
-  catch(e){toast('Ideas: '+e.message);}}
-function ideaRow(x,showPill){const who=x.owner!==ME.name?' · '+esc(x.owner):'';
-  const pill=!showPill||!x.jam?'':x.jam.state==='discussed'?'<span class="pill ok">Discussed</span>':'<span class="pill wait">Jam list</span>';
-  return `<div class="hrow" data-idea="${esc(x.cid)}|${esc(x.iid)}"><div class="m"><div class="t">${esc(x.summary)}</div><div class="d">${fmtTime(x.created)}${who}</div></div>${pill}</div>`;}
+/* ---------- Ideas (v4.0): "22 - Ideas" sheet. Jam list, status, add, edit, delete forever. Preview → write → read back ---------- */
+let IDEAS=null,IFILT=LS.get('krude_ifilt')||'Active';
+try{IDEAS=JSON.parse(LS.get('krude_ideas4')||'null')}catch(e){}
+const IST=['New','Exploring','In design','Parked','Dropped','Graveyard'],IHIDE=['Dropped','Graveyard'];
+const ISTPILL={New:'',Exploring:'wait','In design':'ok',Parked:'',Dropped:'bad',Graveyard:''};
+function setIdeas(d){IDEAS=d;LS.set('krude_ideas4',JSON.stringify(IDEAS));renderIdeas();}
+async function loadIdeas(){try{setIdeas(await call('idea_list',{},60000));}catch(e){toast('Ideas: '+e.message);}}
+const lookAgain=x=>x.status==='Parked'&&x.look_again&&IDEAS&&x.look_again<=IDEAS.today;
+function ideaRow(x){const bits=[x.owner,x.date,x.product].filter(Boolean);
+  return `<div class="hrow" data-idea="${esc(x.id)}"><div class="m"><div class="t" dir="auto">${esc(x.title)}</div><div class="d">${esc(bits.join(' · '))}${x.private?' · <b>Private</b>':''}${x.look_again&&x.status==='Parked'?' · look again '+esc(x.look_again):''}</div></div><span class="pill ${ISTPILL[x.status]||''}">${esc(x.status)}</span></div>`;}
 function renderIdeas(){if(!ME)return;if(!IDEAS){$('iList').innerHTML='<div class="empty">Loading…</div>';return;}
-  const open=IDEAS.jam.filter(x=>x.jam.state==='open'),disc=IDEAS.jam.filter(x=>x.jam.state==='discussed');
-  $('iList').innerHTML=`<div class="sec" style="margin-top:0">Jam list · ${open.length}</div>`+
-    (open.map(x=>ideaRow(x,false)).join('')||'<div class="empty">No ideas on the jam list. Open one of your ideas and tap "Add to jam list".</div>')+
-    (disc.length?`<div class="sec"><button class="link" id="iDisc">Discussed · ${disc.length} (show)</button></div><div id="iDiscList" class="hide">${disc.map(x=>ideaRow(x,false)).join('')}</div>`:'')+
-    `<div class="sec">${ME.admin?'All ideas':'My ideas'} · ${IDEAS.mine.length}</div>`+
-    (IDEAS.mine.map(x=>ideaRow(x,true)).join('')||'<div class="empty">No ideas yet. Record one in Capture.</div>');
-  if($('iDisc'))$('iDisc').onclick=()=>$('iDiscList').classList.toggle('hide');}
-$('iList').onclick=e=>{const r=e.target.closest('[data-idea]');if(!r||!IDEAS)return;const [cid,iid]=r.dataset.idea.split('|');
-  const x=IDEAS.mine.concat(IDEAS.jam).find(i=>i.cid===cid&&i.iid===iid);if(!x)return;
-  const b=[];
-  if(x.jam&&x.jam.state==='open')b.push(['discussed','Mark discussed','']);
-  if(x.jam&&x.jam.state==='discussed')b.push(['open','Back to jam list','ghost']);
-  if(x.can_edit)b.push(x.jam?['remove','Remove from jam list','ghost']:['add','Add to jam list','']);
-  const by=x.jam?`<p class="who">On the jam list (added by ${esc(x.jam.by)})${x.jam.state==='discussed'?' · discussed'+(x.jam.discussed_by?' by '+esc(x.jam.discussed_by):''):''}</p>`:'';
-  openSheet(`<div class="detail"><h2>Idea</h2><div class="sub">${fmtTime(x.created)} · ${esc(x.owner)}</div>
-    <p dir="auto"><b>${esc(x.summary)}</b></p>${x.notes?`<p dir="auto">${esc(x.notes)}</p>`:''}${by}
-    <div class="row" style="margin-top:14px">${b.map(([op,l,c])=>`<button class="btn small ${c}" data-op="${op}">${l}</button>`).join('')}<button class="btn small ghost" id="iClose">Close</button></div></div>`);
-  $('iClose').onclick=closeSheet;
-  $('sheetIn').querySelectorAll('[data-op]').forEach(btn=>btn.onclick=async()=>{$('sheetIn').querySelectorAll('[data-op]').forEach(z=>z.disabled=true);const lbl=btn.textContent;btn.textContent='Saving…';
-    try{IDEAS=await wcall(lbl+' · '+x.summary,'jam',{capture_id:cid,item_id:iid,op:btn.dataset.op},60000);LS.set('krude_ideas',JSON.stringify(IDEAS));closeSheet();renderIdeas();toast('Done.');}
-    catch(err){toast(err.message);closeSheet();}});};
-$('iRefresh').onclick=loadIdeas;
+  const q=$('iQ').value.trim().toLowerCase(),hit=x=>!q||[x.title,x.notes,x.product,x.owner,x.status_note].join(' ').toLowerCase().includes(q);
+  const all=IDEAS.ideas.filter(hit),cnt=s=>all.filter(x=>s==='Active'?!IHIDE.includes(x.status):x.status===s).length;
+  $('iFilters').innerHTML=['Active'].concat(IST).map(s=>`<button class="chip ${IFILT===s?'on':''}" data-if="${s}">${s} ${cnt(s)}</button>`).join('');
+  const jam=all.filter(x=>x.jam),back=all.filter(x=>!x.jam&&lookAgain(x));
+  const list=all.filter(x=>IFILT==='Active'?!IHIDE.includes(x.status)&&!x.jam&&!lookAgain(x):x.status===IFILT).sort((a,b)=>b.date.localeCompare(a.date));
+  const box=(name,l,empty)=>`<div class="grp"><div class="ghead"><span>${name}</span><span class="n">${l.length}</span></div>${l.map(ideaRow).join('')||`<div class="empty" style="padding:12px 0">${empty}</div>`}</div>`;
+  $('iList').innerHTML=(IFILT==='Active'?box('Jam list',jam,'Nothing on the jam list. Open an idea and tap "Add to jam list".')+(back.length?box('Look again (parked)',back,''):''):'')+
+    box(IFILT==='Active'?'Ideas':IFILT,list,IFILT==='Active'?'No ideas yet. Tap "+ Idea" or record one in Capture.':'Nothing here.');}
+$('iFilters').onclick=e=>{const f=e.target.closest('[data-if]');if(!f)return;IFILT=f.dataset.if;LS.set('krude_ifilt',IFILT);renderIdeas();};
+$('iQ').oninput=renderIdeas;$('iRefresh').onclick=loadIdeas;$('iAdd').onclick=()=>ideaForm(null);
+$('iList').onclick=e=>{const r=e.target.closest('[data-idea]');if(!r||!IDEAS)return;const x=IDEAS.ideas.find(i=>i.id===r.dataset.idea);if(x)openIdea(x);};
+// Preview in #iWork, then confirm. del = type DELETE first.
+async function ideaPreview(body,back,done){const box=$('iWork');box.innerHTML='<p class="who">Checking the sheet…</p>';let p;
+  try{p=await call('idea_change',Object.assign({dry:true},body),60000);}
+  catch(e){box.innerHTML=`<div class="banner err">${esc(e.message)}</div><div class="row"><button class="btn small ghost" id="iNo">Back</button></div>`;$('iNo').onclick=back;return;}
+  if(!$('iWork'))return;const del=body.op==='delete';
+  $('iWork').innerHTML=`<div class="lbl">This will ${del?'delete':'change'}</div><div class="card" style="padding:12px;${del?'border-color:var(--red)':''}">${p.plan.map(l=>`<p dir="auto" style="margin:4px 0">${esc(l)}</p>`).join('')}</div>
+    ${del?'<div class="lbl">Type DELETE to confirm</div><input id="iDel" autocomplete="off" autocapitalize="characters" placeholder="DELETE">':''}
+    <div class="btns"><button class="btn ghost" id="iNo">Back</button><button class="btn" id="iYes" ${del?'disabled style="background:var(--red);border-color:var(--red)"':''}>${del?'Delete forever':'Confirm'}</button></div>`;
+  if(del)$('iDel').oninput=()=>{$('iYes').disabled=$('iDel').value.trim()!=='DELETE';};
+  $('iNo').onclick=back;
+  $('iYes').onclick=async()=>{const b=$('iYes');if(del&&$('iDel').value.trim()!=='DELETE')return;b.disabled=true;b.textContent='Saving…';
+    try{const r=await wcall(p.plan[0],'idea_change',body,120000);setIdeas(r);closeSheet();toast(done||'Saved and checked.');}
+    catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};}
+function openIdea(x){const canPriv=IDEAS.can_private&&x.owner==='Youssef';
+  openSheet(`<div class="detail"><h2 dir="auto">${esc(x.title)}</h2><div class="sub">${esc([x.owner,x.date,x.product,x.private?'Private':''].filter(Boolean).join(' · '))}</div>
+    ${x.notes?`<p dir="auto" style="white-space:pre-wrap">${esc(x.notes)}</p>`:''}
+    <p><span class="pill ${ISTPILL[x.status]||''}">${esc(x.status)}</span>${x.jam?' <span class="pill wait">On jam list</span>':''}</p>
+    ${x.status_note||x.status_by?`<p class="who" dir="auto">${esc([x.status_note,x.status_by,x.status_date].filter(Boolean).join(' · '))}</p>`:''}
+    ${x.look_again&&x.status==='Parked'?`<p class="who">Look again on ${esc(x.look_again)}</p>`:''}
+    ${x.pipeline?`<p class="who">Pipeline product: ${esc(x.pipeline)}</p>`:''}
+    ${x.source?`<p class="who" dir="auto">Source: ${esc(x.source.replace(/\s*\[capture-item:[^\]]*\]/,''))}</p>`:''}
+    <div class="lbl">${x.jam?'Discussed? Pick the outcome':'Status'}</div>
+    <div class="row">${IST.map(s=>`<button class="chip ${s===x.status?'on':''}" data-ist="${s}">${s}</button>`).join('')}</div>
+    <div class="row" style="margin-top:14px"><button class="btn small ghost" id="iEditB">Edit</button><button class="btn small ghost" id="iJamB">${x.jam?'Take off jam list':'Add to jam list'}</button>
+      <button class="btn small ghost" id="iDelB" style="color:var(--red);border-color:var(--red)">Delete forever</button><button class="btn small ghost" id="iClose">Close</button></div>
+    <div id="iWork"></div></div>`);
+  const back=()=>openIdea(x);
+  $('iClose').onclick=closeSheet;$('iEditB').onclick=()=>ideaForm(x);
+  $('iJamB').onclick=()=>ideaPreview({op:'jam',id:x.id,value:x.jam?'remove':'add'},back,x.jam?'Taken off the jam list.':'On the jam list.');
+  $('iDelB').onclick=()=>ideaPreview({op:'delete',id:x.id},back,'Deleted forever.');
+  $('sheetIn').querySelectorAll('[data-ist]').forEach(b=>b.onclick=()=>{const st=b.dataset.ist;
+    $('sheetIn').querySelectorAll('[data-ist]').forEach(c=>c.classList.toggle('on',c===b));
+    const hint={New:'Back to the start.',Exploring:'You look into it.','In design':'Adds a new product row in Board › Pipeline (Stage Design).',Parked:'Good idea, not now. Optional date: it comes back on the jam list.',Dropped:'Bad idea. The row is kept and hidden.',Graveyard:'Maybe never. The row is kept and hidden.'}[st];
+    $('iWork').innerHTML=`<p class="who">${hint}</p>
+      ${st==='In design'?`<div class="lbl">Product name (Pipeline)</div><input id="ipName" dir="auto" value="${esc(x.title.slice(0,60))}">
+        <div class="prop"><div class="grid"><div><div class="lbl" style="margin-top:4px">Owner</div><select id="ipOwner"><option value="">—</option>${['Youssef','Ahmad'].map(o=>`<option ${o===ME.name?'selected':''}>${o}</option>`).join('')}</select></div>
+        <div><div class="lbl" style="margin-top:4px">Next step</div><input id="ipNext" dir="auto" placeholder="For example: first sketch"></div></div></div>`:''}
+      ${st==='Parked'?`<div class="lbl">Look again on (optional)</div><input id="ipLook" type="date" value="${esc(x.look_again||'')}">`:''}
+      <div class="lbl">${st==='Dropped'?'Why drop it?':'Note (optional)'}</div><textarea id="ipNote" dir="auto"></textarea>
+      <div style="margin-top:10px"><button class="btn" id="ipGo">Preview</button></div>`;
+    $('ipGo').onclick=()=>{const body={op:'status',id:x.id,status:st,note:$('ipNote').value.trim()};
+      if(st==='Dropped'&&!body.note)return toast('Write why you drop it.');
+      if(st==='Parked')body.look_again=$('ipLook').value;
+      if(st==='In design'){body.pipeline={name:$('ipName').value.trim(),owner:$('ipOwner').value,next:$('ipNext').value.trim()};if(!body.pipeline.name)return toast('Write the product name.');}
+      ideaPreview(body,back,'Status saved and checked.');};});}
+// Add (x = null) or edit. Private: Youssef, own ideas only.
+function ideaForm(x){const add=!x,v=x||{},canPriv=IDEAS&&IDEAS.can_private&&(add||v.owner==='Youssef');
+  openSheet(`<div class="detail"><h2>${add?'New idea':'Edit idea'}</h2><div class="sub">${add?'It goes to "22 - Ideas". Both founders see it'+(canPriv?', unless you make it private':'')+'.':esc([v.owner,v.date].join(' · '))}</div>
+    <div class="lbl" style="margin-top:0">Idea</div><input id="ifTitle" dir="auto" value="${esc(v.title||'')}" placeholder="The idea in a few words">
+    <div class="lbl">Notes</div><textarea id="ifNotes" dir="auto">${esc(v.notes||'')}</textarea>
+    <div class="lbl">Product (optional)</div><input id="ifProduct" dir="auto" list="ifProducts" value="${esc(v.product||'')}"><datalist id="ifProducts">${((IDEAS&&IDEAS.products)||[]).map(p=>`<option value="${esc(p)}">`).join('')}</datalist>
+    ${canPriv?`<label class="who" style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="ifPriv" style="width:auto" ${v.private?'checked':''}> Private (Ahmad does not see it)</label>`:''}
+    <div id="iWork"><div class="btns"><button class="btn ghost" id="ifX">${add?'Close':'Back'}</button><button class="btn" id="ifGo">Preview</button></div></div></div>`);
+  const back=()=>add?closeSheet():openIdea(x);
+  $('ifX').onclick=back;
+  $('ifGo').onclick=()=>{const f={title:$('ifTitle').value.trim(),notes:$('ifNotes').value.trim(),product:$('ifProduct').value.trim()};if(canPriv)f.private=$('ifPriv').checked;
+    if(!f.title)return toast('Write the idea.');
+    const body={op:add?'add':'edit',fields:f};if(!add){body.id=v.id;body.seen={title:v.title,notes:v.notes,product:v.product};}
+    ideaPreview(body,()=>ideaForm(x),add?'Idea added and checked.':'Idea saved and checked.');};}
+
 
 /* ---------- Me: weekly report (both) and OpenAI cost (Youssef) ---------- */
 function reportBanner(){const r=ME&&ME.report;
