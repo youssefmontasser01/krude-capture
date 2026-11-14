@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.1;
+const VERSION=3.2;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -136,8 +136,11 @@ function doPost(e){try{
  if(r.action==='review')return json_({ok:true,...review_(r,u)});
  if(r.action==='confirm')return json_({ok:true,...confirm_(r,u)});
  if(r.action==='list')return json_({ok:true,...list_(u)});
- if(r.action==='board')return json_({ok:true,...board_()});
- if(r.action==='set_status')return json_({ok:true,...setStatus_(r,u)});
+ if(r.action==='board')return json_({ok:true,...boardFor_(u)});
+ if(r.action==='task_change')return json_({ok:true,...taskChange_(r,u)});
+ if(r.action==='task_request')return json_({ok:true,...taskRequest_(r,u)});
+ // old phones (before v3.2): status change without preview
+ if(r.action==='set_status'){const x=taskChange_(Object.assign({},r,{op:'status',dry:false}),u);return json_({ok:true,...x.board});}
  throw new Error('Unknown action. Update the phone page.');
  }catch(err){console.error(String(err&&err.stack||err));return json_({ok:false,error:String(err.message||err).slice(0,240)});}}
 
@@ -394,7 +397,7 @@ function reportDraft_(u){const st=reportState_(u),reps=reports_all_(),sent=reps.
   let tasks=[];try{tasks=board_().tasks;}catch(e){console.error('report board: '+e);}
   let log=[];try{log=jread_('_board_log.json',[]);}catch(e){}
   const mineT=t=>norm_(t.owner).includes(me),own=new Set(tasks.filter(mineT).map(t=>t.title)),moved={};
-  log.filter(e=>e.at>since&&(e.by===u.name||own.has(e.title))).forEach(e=>moved[e.title]=e.to); // last change wins
+  log.filter(e=>e.to&&e.at>since&&(e.by===u.name||own.has(e.title))).forEach(e=>moved[e.title]=e.to); // last change wins
   const blocked=tasks.filter(t=>mineT(t)&&/block/i.test(t.status)).map(t=>t.title);
   const decide=new Set();idx_().caps.forEach(c=>{if(c.owner!==u.name)return;(c.items||[]).forEach(x=>{
     if(x.status==='waiting'||(x.kind==='decision_candidate'&&c.created>since&&!['rejected','kept'].includes(x.status)))decide.add(x.summary);});});
@@ -416,7 +419,7 @@ function reportDoc_(x,again){const id=props_().getProperty('REPORTS_DOC_ID');if(
   d.saveAndClose();}
 function reports_(u){return {reports:reports_all_().filter(r=>u.admin||r.owner===u.name).sort((a,b)=>b.week.localeCompare(a.week)||a.owner.localeCompare(b.owner)).slice(0,12)};}
 
-/* ---------- 5. Board tab: live read of Board Tasks, status change only ---------- */
+/* ---------- 5. Board tab: live read of Board Tasks; changes in 5b ---------- */
 const TASK_COLS={title:['task','task name','title','name'],owner:['owner','assigned to','assignee'],due:['due','due date','deadline'],status:['status'],
   function:['function','team'],notes:['notes','note','description'],updated:['last updated','updated','last update'],done:['done date','date done','completed'],
   product:['product'],week:['week']};
@@ -434,21 +437,100 @@ function board_(){const s=taskSheet_(),n=s.getLastRow(),w=s.getLastColumn();
   const vals=s.getRange(1,1,Math.max(n,1),w).getDisplayValues(),m=taskMap_(vals[0]),cell=(r,k)=>m[k]>=0?String(r[m[k]]):'';
   const tasks=[];for(let i=1;i<vals.length;i++){const r=vals[i];if(!cell(r,'title').trim())continue;
     tasks.push({row:i+1,title:cell(r,'title'),product:cell(r,'product'),owner:cell(r,'owner'),due:cell(r,'due'),status:cell(r,'status'),done_date:cell(r,'done'),
-      function:cell(r,'function'),week:cell(r,'week'),notes:cell(r,'notes').slice(0,600)});}
+      function:cell(r,'function'),week:cell(r,'week'),notes:cell(r,'notes').slice(0,3000)});}
   return {tasks:tasks,statuses:statuses_(s,m,tasks.map(t=>t.status)),today:date_()};}
-function setStatus_(r,u){short_(r.title,500);short_(r.status,60);need_(Number.isInteger(r.row)&&r.row>=2,'Invalid row.');
-  return lock_(()=>{const s=taskSheet_(),w=s.getLastColumn(),m=taskMap_(s.getRange(1,1,1,w).getDisplayValues()[0]);
-    const all=board_();need_(all.statuses.includes(r.status),'Invalid status.');
-    let row=r.row,task=all.tasks.find(t=>t.row===row);
-    if(!task||task.title!==r.title){const same=all.tasks.filter(t=>t.title===r.title);need_(same.length===1,'The Board changed. Pull down to refresh.');task=same[0];row=task.row;}
-    s.getRange(row,m.status+1).setValue(r.status);
-    if(m.updated>=0)s.getRange(row,m.updated+1).setValue(date_());
-    // Board rule: Done tasks keep a Done date. Reopened tasks lose it.
-    if(m.done>=0){if(isDoneSt_(r.status)&&!isDoneSt_(task.status))s.getRange(row,m.done+1).setValue(date_());
-      else if(!isDoneSt_(r.status)&&isDoneSt_(task.status))s.getRange(row,m.done+1).setValue('');}
-    SpreadsheetApp.flush();console.log('Board status: row '+row+' "'+r.title+'" -> '+r.status+' by '+u.name);
-    // Log for the weekly report ("moved"). Only changes made in the app are logged.
-    try{let L=[];try{L=jread_('_board_log.json',[]);}catch(e){console.error('board log was not valid. Starting again.');}
-      L.push({at:now_(),title:r.title,owner:task.owner,from:task.status,to:r.status,by:u.name});jwrite_('_board_log.json',L.slice(-500));}
-    catch(e){console.error('board log: '+e);}
-    return board_();});}
+
+/* ---------- 5b. task changes: status, edit, drop. Preview first, then write, then read back ---------- */
+// Rules (Youssef, 14 Nov): Youssef changes any task. Ahmad changes his own tasks; a change to another
+// founder's task, or giving his task to someone else, becomes a request that waits for Youssef.
+// Drop = status "Dropped" + reason in Notes. Rows are never deleted. A status change also updates the
+// product's Pipeline row (Last updated; a Next step / Blocker that was this task becomes "Check: ..." / "None").
+const OWNERS=['Youssef','Ahmad'];
+const PIPE_COLS={product:['product'],next:['next step'],blocker:['blocker'],updated:['last updated','updated'],notes:['notes']};
+const FIELD_LABEL={title:'Task',owner:'Owner',due:'Due',product:'Product',function:'Function',notes:'Notes',status:'Status',done:'Done date'};
+function ownsTask_(u,t){return norm_(t.owner).split(/[^a-z]+/).includes(norm_(u.name));}
+const iso_=v=>{v=String(v||'').trim();return /^\d{4}-\d{2}-\d{2}/.test(v)?v.slice(0,10):v;};
+const cut_=(v,n)=>{v=String(v==null?'':v);return v.length>n?v.slice(0,n)+'…':v;};
+function pipePlan_(task,status){
+  const s=SpreadsheetApp.openById(CFG.BOARD_SHEET_ID).getSheetByName('Pipeline');if(!s||!task.product.trim())return null;
+  const vals=s.getRange(1,1,Math.max(s.getLastRow(),1),Math.max(s.getLastColumn(),1)).getDisplayValues(),h=vals[0],m={};
+  Object.keys(PIPE_COLS).forEach(k=>m[k]=h.findIndex(x=>PIPE_COLS[k].includes(norm_(x))));
+  if(m.product<0)return null;
+  const i=vals.findIndex((r,j)=>j>0&&norm_(r[m.product])===norm_(task.product));if(i<0)return null;
+  const r=vals[i],set={},notes=[],tt=norm_(task.title);
+  if(m.updated>=0)set.updated=date_();
+  if(isClosed_(status)&&tt.length>=6){
+    if(m.next>=0&&norm_(r[m.next]).includes(tt)){set.next='Check: set the next step';notes.push('Old next step: '+r[m.next]+' (task '+status+' '+date_()+').');}
+    if(m.blocker>=0&&norm_(r[m.blocker]).includes(tt)){set.blocker='None';notes.push('Old blocker: '+r[m.blocker]+' (task '+status+' '+date_()+').');}
+  }
+  if(notes.length&&m.notes>=0)set.notes=(r[m.notes]?r[m.notes]+' ':'')+notes.join(' ');
+  return {sheet:s,row:i+1,m:m,set:set,product:r[m.product],old:{next:m.next>=0?r[m.next]:'',blocker:m.blocker>=0?r[m.blocker]:''}};}
+// Works out exactly what a change would write. Reads the live Board. Throws if the change is not valid.
+function planTask_(r,u){
+  short_(r.title,500);need_(Number.isInteger(r.row)&&r.row>=2,'Invalid row.');
+  const op=String(r.op||'');need_(['status','edit','drop'].includes(op),'Invalid change.');
+  const s=taskSheet_(),w=s.getLastColumn(),m=taskMap_(s.getRange(1,1,1,w).getDisplayValues()[0]),all=board_();
+  let task=all.tasks.find(t=>t.row===r.row);
+  if(!task||task.title!==r.title){const same=all.tasks.filter(t=>t.title===r.title);need_(same.length===1,'The Board changed. Refresh and try again.');task=same[0];}
+  const row=task.row,fullNotes=m.notes>=0?s.getRange(row,m.notes+1).getDisplayValue():'',set={};
+  if(op==='status'){short_(r.status,60);need_(all.statuses.includes(r.status)||r.status==='Dropped','Invalid status.');
+    need_(r.status!==task.status,'No change.');set.status=r.status;}
+  if(op==='drop'){const why=short_(String(r.reason||'').trim(),500);need_(why,'Write why you drop the task.');
+    need_(!/^dropped$/i.test(task.status.trim()),'This task is already dropped.');
+    set.status='Dropped';set.notes=((fullNotes?fullNotes+' ':'')+'Dropped '+date_()+' by '+u.name+': '+why).trim();}
+  if(op==='edit'){const c=r.changes;need_(c&&typeof c==='object','Invalid change.');
+    if(c.title!=null){const v=short_(String(c.title).trim(),500);need_(v,'A task needs a title.');if(v!==task.title)set.title=v;}
+    if(c.owner!=null){const v=String(c.owner);need_(OWNERS.includes(v),'The owner must be Youssef or Ahmad.');if(v!==task.owner)set.owner=v;}
+    if(c.due!=null){const v=String(c.due).trim();need_(v===''||/^\d{4}-\d{2}-\d{2}$/.test(v),'The due date must be YYYY-MM-DD.');if(v!==iso_(task.due))set.due=v;}
+    if(c.product!=null){const v=short_(String(c.product).trim(),100);if(v!==task.product)set.product=v;}
+    if(c.function!=null){const v=String(c.function);need_(v===''||FUNCTIONS.includes(v),'Unknown function.');if(v!==task.function)set.function=v;}
+    if(c.notes!=null){const v=short_(String(c.notes).trim(),3000);if(v!==fullNotes.trim())set.notes=v;}
+    need_(Object.keys(set).length,'Nothing changed.');}
+  Object.keys(set).forEach(k=>need_(m[k]>=0,'The Board has no '+(FIELD_LABEL[k]||k)+' column.'));
+  if(set.status&&m.done>=0){if(isDoneSt_(set.status)&&!isDoneSt_(task.status))set.done=date_();
+    else if(!isDoneSt_(set.status)&&isDoneSt_(task.status))set.done='';}
+  const pipe=set.status?pipePlan_(task,set.status):null;
+  const direct=u.admin||(ownsTask_(u,task)&&!(set.owner&&set.owner!==u.name));
+  const old={title:task.title,owner:task.owner,due:task.due,product:task.product,function:task.function,notes:fullNotes,status:task.status,done:task.done_date};
+  const lines=Object.keys(set).map(k=>k==='notes'&&op==='drop'?'Notes: add "Dropped '+date_()+' by '+u.name+': '+cut_(r.reason,120)+'"'
+    :(FIELD_LABEL[k]||k)+': '+(cut_(old[k],80)||'(empty)')+' → '+(cut_(set[k],80)||'(empty)'));
+  if(pipe){lines.push('Pipeline · '+pipe.product+': Last updated → '+date_());
+    if(pipe.set.next)lines.push('Pipeline · '+pipe.product+': Next step "'+cut_(pipe.old.next,80)+'" → "'+pipe.set.next+'" (old text kept in Notes)');
+    if(pipe.set.blocker)lines.push('Pipeline · '+pipe.product+': Blocker "'+cut_(pipe.old.blocker,80)+'" → "None" (old text kept in Notes)');}
+  return {s:s,m:m,row:row,task:task,set:set,pipe:pipe,direct:direct,lines:lines,op:op};}
+// Writes a plan, then reads the task row back. Call inside lock_.
+function applyPlan_(p,u,via){
+  Object.keys(p.set).forEach(k=>p.s.getRange(p.row,p.m[k]+1).setValue(k==='done'||k==='due'?p.set[k]:cleanCell_(p.set[k])));
+  if(p.m.updated>=0)p.s.getRange(p.row,p.m.updated+1).setValue(date_());
+  if(p.pipe)Object.keys(p.pipe.set).forEach(k=>p.pipe.sheet.getRange(p.pipe.row,p.pipe.m[k]+1).setValue(cleanCell_(p.pipe.set[k])));
+  SpreadsheetApp.flush();
+  const back=p.s.getRange(p.row,1,1,p.s.getLastColumn()).getDisplayValues()[0];
+  ['status','title','owner'].forEach(k=>{if(p.set[k]!=null)need_([String(p.set[k]).trim(),cleanCell_(p.set[k]).trim()].includes(String(back[p.m[k]]).trim()),'Not verified: '+(FIELD_LABEL[k]||k)+' did not save. Check the Board.');});
+  console.log('Board '+p.op+': row '+p.row+' "'+p.task.title+'" by '+u.name+(via?' ('+via+')':'')+': '+p.lines.join(' | '));
+  try{let L=[];try{L=jread_('_board_log.json',[]);}catch(e){console.error('board log was not valid. Starting again.');}
+    const e={at:now_(),title:p.set.title||p.task.title,owner:p.set.owner||p.task.owner,op:p.op,by:u.name,lines:p.lines};
+    if(p.set.status){e.from=p.task.status;e.to=p.set.status;}
+    if(via)e.via=via;L.push(e);jwrite_('_board_log.json',L.slice(-500));}
+  catch(e){console.error('board log: '+e);}}
+function requests_(){try{return jread_('_task_requests.json',[]);}catch(e){console.error('requests: '+e);return [];}}
+function boardFor_(u){const b=board_();
+  b.requests=requests_().filter(q=>q.state==='open'&&(u.admin||q.by===u.name)).map(q=>({id:q.id,by:q.by,at:q.at,title:q.req.title,row:q.req.row,op:q.req.op,lines:q.lines}));
+  return b;}
+// r.dry = true: return the preview only. Otherwise write (or file a request for Youssef).
+function taskChange_(r,u){
+  if(r.dry){const p=planTask_(r,u);return {plan:p.lines,direct:p.direct};}
+  const out=lock_(()=>{const p=planTask_(r,u);
+    if(!p.direct){const reqs=requests_();
+      reqs.push({id:Utilities.getUuid(),at:now_(),by:u.name,state:'open',lines:p.lines,
+        req:{row:p.row,title:p.task.title,op:p.op,status:String(r.status||''),reason:String(r.reason||''),changes:r.changes||null}});
+      jwrite_('_task_requests.json',reqs.slice(-300));return {requested:true};}
+    applyPlan_(p,u);return {requested:false};});
+  return Object.assign(out,{board:boardFor_(u)});}
+// Youssef approves or rejects a request from Ahmad. Approve = the same change, planned again on the live Board.
+function taskRequest_(r,u){need_(u.admin,'Only Youssef can approve changes.');const id=String(r.id||''),dec=String(r.decision||'');
+  need_(['approve','reject'].includes(dec),'Invalid decision.');
+  lock_(()=>{const reqs=requests_(),q=reqs.find(x=>x.id===id);need_(q&&q.state==='open','This request is closed. Refresh.');
+    if(dec==='approve'){const p=planTask_(q.req,{name:q.by+', approved by '+u.name,admin:true});applyPlan_(p,u,'request from '+q.by);}
+    Object.assign(q,{state:dec==='approve'?'approved':'rejected',decided_by:u.name,decided_at:now_()});
+    jwrite_('_task_requests.json',reqs.slice(-300));});
+  return {board:boardFor_(u)};}

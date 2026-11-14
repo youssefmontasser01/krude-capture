@@ -172,7 +172,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
   <button id="tCap" class="on">Capture</button>
   <button id="tItems">History<span class="n hide" id="badge"></span></button>
   <button id="tIdeas">Ideas</button>
-  <button id="tBoard">Board</button>
+  <button id="tBoard">Board<span class="n hide" id="bBadge"></span></button>
 </nav>
 
 <div class="sheet" id="sheet"><div class="in" id="sheetIn"></div></div>
@@ -299,7 +299,9 @@ async function flush(){if(!api()||!key())return;const all=await DB.all('outbox')
 async function updateStrip(){const all=await DB.all('outbox');const n=all.filter(x=>x.state==='phone').length;
   $('strip').innerHTML=n?`<b>${n} on this phone, not sent yet.</b> <button class="link" id="sendNow">Send now</button>`:(navigator.onLine?'All captures are saved to Drive.':'Offline. New captures stay on this phone.');
   const b=$('sendNow');if(b)b.onclick=()=>{flush().then(()=>toast('Done.'))};}
-addEventListener('online',()=>{updateStrip();flush();});addEventListener('offline',updateStrip);document.addEventListener('visibilitychange',()=>{if(!document.hidden)flush()});setInterval(flush,60000);
+addEventListener('online',()=>{updateStrip();flush();});addEventListener('offline',updateStrip);document.addEventListener('visibilitychange',()=>{if(document.hidden||!ME)return;flush();
+  // Fresh data each time the app comes back (Board changes made in the sheet or by the other founder).
+  if(CUR==='board')loadBoard();else if(CUR==='items')loadList();else if(CUR==='ideas')loadIdeas();});setInterval(flush,60000);
 
 /* ---------- review ---------- */
 let progressT=null;
@@ -407,7 +409,7 @@ $('list').onclick=async e=>{const t=e.target.closest('[data-send],[data-rev],[da
   else if(t.dataset.cap){openDetail(t.dataset.cap,t.dataset.item);}};
 $('refresh').onclick=loadList;
 
-/* ---------- Board: live read of Board Tasks; status is the only edit ---------- */
+/* ---------- Board: live read of Board Tasks. Changes: status, edit, drop (preview first) ---------- */
 let BOARD=null,BFILTER=null;
 try{BOARD=JSON.parse(LS.get('krude_board')||'null')}catch(e){}
 async function loadBoard(){try{BOARD=await call('board',{},60000);LS.set('krude_board',JSON.stringify(BOARD));renderBoard();}
@@ -418,6 +420,9 @@ const dueKey=t=>/^\d{4}-\d{2}-\d{2}/.test(t.due)?t.due.slice(0,10):(t.due&&!isNa
 function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
   $('bFilters').innerHTML=[ME.name,ME.name==='Youssef'?'Ahmad':'Youssef','All'].map(g=>`<button class="chip ${BFILTER===g?'on':''}" data-b="${g}">${g==='All'?'All':g===ME.name?'Me':g}</button>`).join('');
   if(!BOARD){$('bList').innerHTML='<div class="empty">Loading…</div>';return;}
+  const reqs=BOARD.requests||[];$('bBadge').textContent=reqs.length;$('bBadge').classList.toggle('hide',!(ME.admin&&reqs.length));
+  const reqHTML=reqs.length?`<div class="sec" style="margin-top:0">${ME.admin?'Changes from Ahmad':'Waiting for Youssef'} · ${reqs.length}</div>`+
+    reqs.map(q=>`<div class="hrow" data-req="${esc(q.id)}"><div class="m"><div class="t">${esc(q.title)}</div><div class="d">${esc(q.lines[0]||'')}${q.lines.length>1?' (+'+(q.lines.length-1)+')':''}</div></div><span class="pill wait">${ME.admin?'Review':'Waiting'}</span></div>`).join(''):'';
   const today=BOARD.today,mine=t=>BFILTER==='All'||t.owner.toLowerCase().includes(BFILTER.toLowerCase());
   const open=BOARD.tasks.filter(t=>mine(t)&&!isDone(t)).sort((a,b)=>dueKey(a).localeCompare(dueKey(b)));
   const done=BOARD.tasks.filter(t=>mine(t)&&isDone(t));
@@ -425,22 +430,71 @@ function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
     return `<div class="hrow task ${over?'over':''} ${isDone(t)?'done':''}" data-row="${t.row}"><div class="m"><div class="t">${esc(t.title)}</div>
     <div class="d">${esc(t.owner||'No owner')}${t.due?' · '+(over?'Overdue · ':'')+esc(t.due):''}${t.function?' · '+esc(t.function):''}</div></div><span class="pill ${st}">${esc(t.status||'—')}</span></div>`;};
   const over=open.filter(t=>dueKey(t)<today);const rest=open.filter(t=>dueKey(t)>=today);
-  $('bList').innerHTML=(over.length?`<div class="sec">Overdue · ${over.length}</div>`+over.map(row).join(''):'')+
+  $('bList').innerHTML=reqHTML+(over.length?`<div class="sec">Overdue · ${over.length}</div>`+over.map(row).join(''):'')+
     `<div class="sec">Open · ${rest.length}</div>`+(rest.map(row).join('')||'<div class="empty">No open tasks.</div>')+
     (done.length?`<div class="sec"><button class="link" id="bDone">Done or dropped · ${done.length} (show)</button></div><div id="bDoneList" class="hide">${done.map(row).join('')}</div>`:'');
   if($('bDone'))$('bDone').onclick=()=>$('bDoneList').classList.toggle('hide');}
 $('bFilters').onclick=e=>{const g=e.target.dataset.b;if(g){BFILTER=g;renderBoard();}};
-$('bList').onclick=e=>{const r=e.target.closest('[data-row]');if(!r)return;const t=BOARD.tasks.find(x=>x.row===+r.dataset.row);if(!t)return;
-  openSheet(`<div class="detail"><h2 dir="auto">${esc(t.title)}</h2><div class="sub">${esc(t.owner||'No owner')}${t.due?' · Due '+esc(t.due):''}${t.function?' · '+esc(t.function):''}</div>
-    ${t.notes?`<p dir="auto">${esc(t.notes)}</p>`:''}<div class="lbl">Status</div>
-    <div class="row">${BOARD.statuses.map(s=>`<button class="chip ${s===t.status?'on':''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
-    <p class="who" style="margin-top:12px">To change the task, owner or date, record it in Capture.</p>
-    <div class="row" style="margin-top:8px"><button class="btn small ghost" id="tClose">Close</button></div></div>`);
+/* ---------- Task screen: status, edit, drop. Every change shows a preview first (same rule as Crude Today) ---------- */
+const owns=t=>ME.admin||String(t.owner||'').toLowerCase().split(/[^a-z]+/).includes(ME.name.toLowerCase());
+const isoDue=v=>/^\d{4}-\d{2}-\d{2}/.test(v||'')?v.slice(0,10):'';
+function setBoard(b){BOARD=b;LS.set('krude_board',JSON.stringify(BOARD));renderBoard();}
+$('bList').onclick=e=>{const q=e.target.closest('[data-req]');if(q)return openRequest(q.dataset.req);
+  const r=e.target.closest('[data-row]');if(!r)return;const t=BOARD.tasks.find(x=>x.row===+r.dataset.row);if(t)openTask(t);};
+function openTask(t){const mine=owns(t),closed=isDone(t);
+  const pend=(BOARD.requests||[]).filter(q=>q.row===t.row&&q.title===t.title);
+  openSheet(`<div class="detail"><h2 dir="auto">${esc(t.title)}</h2><div class="sub">${esc(t.owner||'No owner')}${t.due?' · Due '+esc(t.due):''}${t.product?' · '+esc(t.product):''}${t.function?' · '+esc(t.function):''}</div>
+    ${t.notes?`<p dir="auto" style="white-space:pre-wrap">${esc(t.notes)}</p>`:''}
+    ${pend.length?`<div class="banner">${pend.length} change${pend.length>1?'s':''} for this task wait${pend.length>1?'':'s'} for Youssef.</div>`:''}
+    <div class="lbl">Status</div>
+    <div class="row">${BOARD.statuses.filter(s=>!/^dropped$/i.test(s)).map(s=>`<button class="chip ${s===t.status?'on':''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+    <div class="row" style="margin-top:14px"><button class="btn small ghost" id="tEditB">Edit task</button>${/^dropped$/i.test(t.status.trim())?'':'<button class="btn small ghost" id="tDropB">Drop task</button>'}<button class="btn small ghost" id="tClose">Close</button></div>
+    ${mine?'':'<p class="who" style="margin-top:10px">This is not your task. Your change goes to Youssef to approve.</p>'}
+    <div id="tWork"></div></div>`);
   $('tClose').onclick=closeSheet;
-  $('sheetIn').querySelectorAll('[data-s]').forEach(b=>b.onclick=async()=>{const st=b.dataset.s;if(st===t.status)return;
-    $('sheetIn').querySelectorAll('[data-s]').forEach(x=>x.disabled=true);b.textContent='Saving…';
-    try{BOARD=await call('set_status',{row:t.row,title:t.title,status:st},60000);LS.set('krude_board',JSON.stringify(BOARD));closeSheet();renderBoard();toast('Board updated.');}
-    catch(err){toast(err.message);closeSheet();loadBoard();}});};
+  $('sheetIn').querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{if(b.dataset.s===t.status)return;
+    $('sheetIn').querySelectorAll('[data-s]').forEach(x=>x.classList.toggle('on',x===b));preview(t,{op:'status',status:b.dataset.s});});
+  $('tEditB').onclick=()=>{const fns=['',...FUNCTIONS];
+    $('tWork').innerHTML=`<div class="lbl">Task</div><input id="eTitle" dir="auto" value="${esc(t.title)}">
+      <div class="prop"><div class="grid">
+        <div><div class="lbl" style="margin-top:4px">Owner</div><select id="eOwner">${['Youssef','Ahmad'].map(o=>`<option ${t.owner===o?'selected':''}>${o}</option>`).join('')}${['Youssef','Ahmad'].includes(t.owner)?'':`<option selected value="">${esc(t.owner||'—')}</option>`}</select></div>
+        <div><div class="lbl" style="margin-top:4px">Due</div><input id="eDue" type="date" value="${esc(isoDue(t.due))}"></div>
+        <div><div class="lbl" style="margin-top:4px">Product</div><input id="eProduct" dir="auto" value="${esc(t.product)}"></div>
+        <div><div class="lbl" style="margin-top:4px">Function</div><select id="eFunction">${fns.map(f=>`<option value="${esc(f)}" ${t.function===f?'selected':''}>${esc(f||'—')}</option>`).join('')}${fns.includes(t.function)?'':`<option selected value="${esc(t.function)}">${esc(t.function)}</option>`}</select></div>
+      </div></div>
+      <div class="lbl">Notes</div><textarea id="eNotes" dir="auto">${esc(t.notes)}</textarea>
+      <div style="margin-top:10px"><button class="btn" id="eGo">Preview changes</button></div>`;
+    $('eGo').onclick=()=>{const c={},v={title:$('eTitle').value.trim(),owner:$('eOwner').value,due:$('eDue').value,product:$('eProduct').value.trim(),function:$('eFunction').value,notes:$('eNotes').value.trim()};
+      if(v.title!==t.title)c.title=v.title;if(v.owner&&v.owner!==t.owner)c.owner=v.owner;if(v.due!==isoDue(t.due))c.due=v.due;
+      if(v.product!==t.product)c.product=v.product;if(v.function!==t.function)c.function=v.function;if(v.notes!==t.notes.trim())c.notes=v.notes;
+      if(!Object.keys(c).length)return toast('Nothing changed.');preview(t,{op:'edit',changes:c});};};
+  if($('tDropB'))$('tDropB').onclick=()=>{
+    $('tWork').innerHTML=`<div class="lbl">Why drop it?</div><textarea id="dWhy" dir="auto" placeholder="For example: added by mistake, not needed any more"></textarea>
+      <p class="who">The row stays on the Board with status "Dropped" and your reason in Notes. Nothing is deleted.</p>
+      <button class="btn" id="dGo">Preview</button>`;
+    $('dGo').onclick=()=>{const why=$('dWhy').value.trim();if(!why)return toast('Write why you drop it.');preview(t,{op:'drop',reason:why});};};}
+async function preview(t,ch){const box=$('tWork');if(!box)return;box.innerHTML='<p class="who">Checking the Board…</p>';
+  const body=Object.assign({row:t.row,title:t.title},ch);let p;
+  try{p=await call('task_change',Object.assign({dry:true},body),60000);}catch(e){box.innerHTML=`<div class="banner err">${esc(e.message)}</div>`;return;}
+  if(!$('tWork'))return;
+  $('tWork').innerHTML=`<div class="lbl">This will change</div><div class="card" style="padding:12px">${p.plan.map(l=>`<p dir="auto" style="margin:4px 0">${esc(l)}</p>`).join('')}</div>
+    ${p.direct?'':'<div class="banner">This goes to Youssef. The Board changes only when he approves.</div>'}
+    <div class="btns"><button class="btn ghost" id="pNo">Cancel</button><button class="btn" id="pYes">${p.direct?'Confirm':'Send to Youssef'}</button></div>`;
+  $('pNo').onclick=()=>openTask(t);
+  $('pYes').onclick=async()=>{const b=$('pYes');b.disabled=true;b.textContent='Saving…';
+    try{const r=await call('task_change',body,60000);setBoard(r.board);closeSheet();toast(r.requested?'Sent to Youssef.':'Board updated and checked.');}
+    catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};}
+function openRequest(id){const q=(BOARD.requests||[]).find(x=>x.id===id);if(!q)return;
+  openSheet(`<div class="detail"><h2 dir="auto">${esc(q.title)}</h2><div class="sub">${esc(q.by)} · ${fmtTime(q.at)} · ${esc({status:'Status change',edit:'Edit',drop:'Drop'}[q.op]||q.op)}</div>
+    <div class="card" style="padding:12px">${q.lines.map(l=>`<p dir="auto" style="margin:4px 0">${esc(l)}</p>`).join('')}</div>
+    ${ME.admin?`<p class="who">Approve checks the Board again and writes the change.</p><div class="btns"><button class="btn ghost" id="qNo">Reject</button><button class="btn" id="qYes">Approve</button></div>`
+      :'<p class="who">Waits for Youssef.</p>'}
+    <div class="row" style="margin-top:10px"><button class="btn small ghost" id="qClose">Close</button></div></div>`);
+  $('qClose').onclick=closeSheet;
+  const go=async d=>{['qNo','qYes'].forEach(i=>$(i).disabled=true);
+    try{const r=await call('task_request',{id,decision:d},60000);setBoard(r.board);closeSheet();toast(d==='approve'?'Approved. Board updated.':'Rejected.');}
+    catch(e){toast(e.message);closeSheet();loadBoard();}};
+  if($('qYes')){$('qYes').onclick=()=>go('approve');$('qNo').onclick=()=>go('reject');}}
 $('bRefresh').onclick=loadBoard;
 
 /* ---------- Ideas: my ideas + the shared jam list ---------- */
@@ -521,7 +575,8 @@ $('sheet').onclick=e=>{if(e.target===$('sheet'))closeSheet();};
 let toastT;function toast(msg){let el=$('toast');if(!el){el=document.createElement('div');el.id='toast';el.style.cssText='position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1d1b18;color:#f4f1ec;padding:10px 16px;border-radius:10px;font-size:14px;z-index:20;max-width:90vw;text-align:center';document.body.appendChild(el);}
   el.textContent=msg;el.style.display='block';clearTimeout(toastT);toastT=setTimeout(()=>el.style.display='none',3500);}
 const TABS={cap:['vCap','tCap'],items:['vHist','tItems'],ideas:['vIdeas','tIdeas'],board:['vBoard','tBoard']};
-function tab(name){Object.entries(TABS).forEach(([k,[v,t]])=>{$(v).classList.toggle('hide',k!==name);$(t).classList.toggle('on',k===name);});
+let CUR='cap';
+function tab(name){CUR=name;Object.entries(TABS).forEach(([k,[v,t]])=>{$(v).classList.toggle('hide',k!==name);$(t).classList.toggle('on',k===name);});
   if(name==='items'){renderList();loadList();}if(name==='ideas'){renderIdeas();loadIdeas();}if(name==='board'){renderBoard();loadBoard();}}
 Object.entries(TABS).forEach(([k,[,t]])=>$(t).onclick=()=>tab(k));
 function needSetup(msg){['vCap','vHist','vIdeas','vBoard','nav'].forEach(i=>$(i).classList.add('hide'));$('vSetup').classList.remove('hide');
@@ -546,6 +601,7 @@ async function start(){
     ME=JSON.parse(LS.get('krude_me')||'null');if(!ME)return needSetup(e.message);toast('Offline. You can still record.');}
   $('who').textContent=ME.name;reportBanner();['vCap','nav'].forEach(i=>$(i).classList.remove('hide'));tab('cap');
   renderHints();renderThumbs();canSave();updateStrip();recover();flush();
+  if(ME.admin)loadBoard(); // shows the badge when Ahmad's changes wait
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 }
 start();
