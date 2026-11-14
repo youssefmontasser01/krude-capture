@@ -576,8 +576,11 @@ function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
   else{const key=BGROUP==='Product'?'product':'function',G={};open.forEach(t=>{const k=String(t[key]||"").trim()||'zzz';(G[k]=G[k]||[]).push(t);});
     body=Object.keys(G).sort().map(k=>sec(k==='zzz'?'No '+key:k,G[k])).join('');}
   $('bList').innerHTML=reqHTML+(body||'<div class="empty">No open tasks for this filter.</div>')+
-    (done.length?`<div class="sec"><button class="link" id="bDone">Done or dropped · ${done.length} (show)</button></div><div id="bDoneList" class="hide">${done.sort((a,b)=>b.row-a.row).map(row).join('')}</div>`:'');
-  if($('bDone'))$('bDone').onclick=()=>$('bDoneList').classList.toggle('hide');}
+    (done.length?`<div class="sec" style="display:flex;justify-content:space-between;align-items:center"><button class="link" id="bDone">Done or dropped · ${done.length} (show)</button><button class="btn small ghost" id="bArchAll" style="text-transform:none;letter-spacing:0">Archive all ${done.length}</button></div><div id="bDoneList" class="hide">${done.sort((a,b)=>b.row-a.row).map(row).join('')}</div>`:'')+
+    `<div style="text-align:center;margin-top:6px"><button class="link" id="bArchived">Archived tasks</button></div>`;
+  if($('bDone'))$('bDone').onclick=()=>$('bDoneList').classList.toggle('hide');
+  if($('bArchAll'))$('bArchAll').onclick=()=>archiveAll(done);
+  $('bArchived').onclick=openArchive;}
 $('bFilters2').onclick=e=>{const s=e.target.dataset.st,g=e.target.dataset.g;if(s){BSTAT=s;LS.set('krude_bstat',s);}if(g){BGROUP=g;LS.set('krude_bgroup',g);}if(s||g)renderBoard();};
 $('bQ').oninput=()=>renderBoard();
 $('bWhich').onclick=e=>{const w=e.target.dataset.which;if(w==null||w===BWHICH)return;BWHICH=w;LS.set('krude_bwhich',w);renderBoard();loadBoard();};
@@ -595,7 +598,7 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
     ${pend.length?`<div class="banner">${pend.length} change${pend.length>1?'s':''} for this task wait${pend.length>1?'':'s'} for Youssef.</div>`:''}
     <div class="lbl">Status</div>
     <div class="row">${BOARD.statuses.filter(s=>!/^dropped$/i.test(s)).map(s=>`<button class="chip ${s===t.status?'on':''}" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
-    <div class="row" style="margin-top:14px"><button class="btn small ghost" id="tEditB">Edit task</button>${/^dropped$/i.test(String(t.status||"").trim())?'':'<button class="btn small ghost" id="tDropB">Drop task</button>'}<button class="btn small ghost" id="tClose">Close</button></div>
+    <div class="row" style="margin-top:14px"><button class="btn small ghost" id="tEditB">Edit task</button>${/^dropped$/i.test(String(t.status||"").trim())?'':'<button class="btn small ghost" id="tDropB">Drop task</button>'}<button class="btn small ghost" id="tArchB">Archive</button>${ME.admin?'<button class="btn small ghost" id="tDelB" style="color:var(--red);border-color:var(--red)">Delete forever</button>':''}<button class="btn small ghost" id="tClose">Close</button></div>
     <div id="tWork"></div></div>`);
   $('tClose').onclick=closeSheet;
   $('sheetIn').querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{if(b.dataset.s===t.status)return;
@@ -614,6 +617,8 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
       if(v.title!==t.title)c.title=v.title;if(v.owner&&v.owner!==t.owner)c.owner=v.owner;if(v.due!==isoDue(t.due))c.due=v.due;
       if(v.product!==t.product)c.product=v.product;if(v.function!==t.function)c.function=v.function;if(v.notes!==String(t.notes||"").trim())c.notes=v.notes;
       if(!Object.keys(c).length)return toast('Nothing changed.');preview(t,{op:'edit',changes:c});};};
+  $('tArchB').onclick=()=>movePreview({op:'archive',from:'tasks',board:BOARD.which||'',items:[{row:t.row,title:t.title}]},()=>openTask(t));
+  if($('tDelB'))$('tDelB').onclick=()=>movePreview({op:'delete',from:'tasks',board:BOARD.which||'',items:[{row:t.row,title:t.title}]},()=>openTask(t));
   if($('tDropB'))$('tDropB').onclick=()=>{
     $('tWork').innerHTML=`<div class="lbl">Why drop it?</div><textarea id="dWhy" dir="auto" placeholder="For example: added by mistake, not needed any more"></textarea>
       <p class="who">The row stays on the Board with status "Dropped" and your reason in Notes. Nothing is deleted.</p>
@@ -630,6 +635,45 @@ async function preview(t,ch){const box=$('tWork');if(!box)return;box.innerHTML='
   $('pYes').onclick=async()=>{const b=$('pYes');b.disabled=true;b.textContent='Saving…';
     try{const r=await call('task_change',body,60000);setBoard(r.board);closeSheet();toast(r.requested?'Sent to Youssef.':'Board updated and checked.');}
     catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};}
+/* ---------- Archive and delete forever (v3.9). Preview first; delete forever: Youssef only, type DELETE ---------- */
+// The preview goes into #tWork (task screen, archive screen) or into a new sheet (Archive all).
+async function movePreview(body,back){if(!$('tWork'))openSheet('<div class="detail"><h2>Archive</h2><div id="tWork"></div></div>');
+  const box=$('tWork');box.innerHTML='<p class="who">Checking the Board…</p>';let p;
+  try{p=await call('task_change',Object.assign({dry:true},body),60000);}catch(e){box.innerHTML=`<div class="banner err">${esc(e.message)}</div><div class="row"><button class="btn small ghost" id="pNo">Back</button></div>`;$('pNo').onclick=back||closeSheet;return;}
+  if(!$('tWork'))return;const del=body.op==='delete';
+  $('tWork').innerHTML=`<div class="lbl">This will ${del?'delete':'change'}</div><div class="card" style="padding:12px;${del?'border-color:var(--red)':''}">${p.plan.map(l=>`<p dir="auto" style="margin:4px 0">${esc(l)}</p>`).join('')}</div>
+    ${del?'<div class="lbl">Type DELETE to confirm</div><input id="pDel" autocomplete="off" autocapitalize="characters" placeholder="DELETE">':''}
+    <div class="btns"><button class="btn ghost" id="pNo">Cancel</button><button class="btn" id="pYes" ${del?'disabled style="background:var(--red);border-color:var(--red)"':''}>${del?'Delete forever':body.op==='restore'?'Restore':'Archive'}</button></div>`;
+  if(del)$('pDel').oninput=()=>{$('pYes').disabled=$('pDel').value.trim()!=='DELETE';};
+  $('pNo').onclick=back||closeSheet;
+  $('pYes').onclick=async()=>{const b=$('pYes');if(del&&$('pDel').value.trim()!=='DELETE')return;b.disabled=true;b.textContent='Saving…';
+    try{const r=await call('task_change',body,180000);if(r.board&&(r.board.which||'')===(BOARD&&BOARD.which||''))setBoard(r.board);ARCH=r.archived||ARCH;closeSheet();
+      toast({archive:'Archived and checked.',restore:'Restored to the Board and checked.',delete:'Deleted forever.'}[body.op]);}
+    catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};}
+function archiveAll(done){if(!done.length)return;
+  openSheet(`<div class="detail"><h2>Archive all done or dropped</h2><div class="sub">${done.length} task${done.length===1?'':'s'} in this view (filters and search apply). They move to the Archive tab of the sheet. You can restore them.</div><div id="tWork"></div></div>`);
+  movePreview({op:'archive',from:'tasks',all:true,board:BOARD.which||'',items:done.map(t=>({row:t.row,title:t.title}))});}
+let ARCH=null;
+async function openArchive(){const which=BOARD&&BOARD.which||'';
+  openSheet(`<div class="detail"><h2>Archived tasks${which?' · Strategy':''}</h2><div class="sub">Tap a task to restore it${ME.admin?' or delete it forever':''}.</div>
+    <input id="arQ" type="search" dir="auto" placeholder="Search archived tasks" style="margin-bottom:8px"><div id="arList" class="who">Loading…</div>
+    <div class="row" style="margin-top:14px"><button class="btn small ghost" id="arClose">Close</button></div></div>`);
+  $('arClose').onclick=closeSheet;
+  const draw=()=>{const el=$('arList');if(!el||!ARCH)return;const q=$('arQ').value.trim().toLowerCase();
+    const list=ARCH.filter(t=>!q||[t.title,t.owner,t.product,t.notes].join(' ').toLowerCase().includes(q));el.className='';
+    el.innerHTML=list.map(t=>`<div class="hrow" data-ar="${t.row}"><div class="m"><div class="t" dir="auto">${esc(t.title)}</div>
+      <div class="d">${esc([t.owner||'No owner',t.archived_on?'Archived '+t.archived_on+(t.archived_by?' by '+t.archived_by:''):''].filter(Boolean).join(' · '))}</div></div><span class="pill">${esc(t.status||'—')}</span></div>`).join('')||'<div class="empty">No archived tasks.</div>';};
+  $('arQ').oninput=draw;
+  $('arList').onclick=e=>{const r=e.target.closest('[data-ar]');if(!r)return;const t=ARCH.find(x=>x.row===+r.dataset.ar);if(!t)return;
+    const it={from:'archive',board:which,items:[{row:t.row,title:t.title}]};
+    openSheet(`<div class="detail"><h2 dir="auto">${esc(t.title)}</h2><div class="sub">${esc([t.owner||'No owner',t.status,t.due?'Due '+t.due:'',t.product,t.archived_on?'Archived '+t.archived_on:''].filter(Boolean).join(' · '))}</div>
+      ${t.notes?`<p dir="auto" style="white-space:pre-wrap">${esc(t.notes)}</p>`:''}
+      <div class="row" style="margin-top:14px"><button class="btn small ghost" id="arRe">Restore to the Board</button>${ME.admin?'<button class="btn small ghost" id="arDel" style="color:var(--red);border-color:var(--red)">Delete forever</button>':''}<button class="btn small ghost" id="arBack">Back</button></div><div id="tWork"></div></div>`);
+    $('arBack').onclick=openArchive;
+    $('arRe').onclick=()=>movePreview(Object.assign({op:'restore'},it),openArchive);
+    if($('arDel'))$('arDel').onclick=()=>movePreview(Object.assign({op:'delete'},it),openArchive);};
+  draw();
+  try{const r=await call('archive_list',{which},60000);ARCH=r.archived;draw();}catch(e){const el=$('arList');if(el)el.textContent=e.message;}}
 function openRequest(id){const q=(BOARD.requests||[]).find(x=>x.id===id);if(!q)return;
   openSheet(`<div class="detail"><h2 dir="auto">${esc(q.title)}</h2><div class="sub">${esc(q.by)} · ${fmtTime(q.at)} · ${esc({status:'Status change',edit:'Edit',drop:'Drop'}[q.op]||q.op)}</div>
     <div class="card" style="padding:12px">${q.lines.map(l=>`<p dir="auto" style="margin:4px 0">${esc(l)}</p>`).join('')}</div>

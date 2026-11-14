@@ -150,6 +150,7 @@ function doPost(e){try{
  if(r.action==='list')return json_({ok:true,...list_(u)});
  if(r.action==='board')return json_({ok:true,...boardFor_(u,r.which)});
  if(r.action==='task_change')return json_({ok:true,...taskChange_(r,u)});
+ if(r.action==='archive_list')return json_({ok:true,...archiveList_(r,u)});
  if(r.action==='task_request')return json_({ok:true,...taskRequest_(r,u)});
  // old phones (before v3.2): status change without preview
  if(r.action==='set_status'){const x=taskChange_(Object.assign({},r,{op:'status',dry:false}),u);return json_({ok:true,...x.board});}
@@ -624,6 +625,7 @@ function boardFor_(u,which){
   return b;}
 // r.dry = true: return the preview only. Otherwise write (or file a request for Youssef).
 function taskChange_(r,u){
+  if(MOVE_OPS.includes(String(r.op||'')))return taskMove_(r,u);
   if(r.dry){const p=planTask_(r,u);return {plan:p.lines,direct:p.direct};}
   const out=lock_(()=>{const p=planTask_(r,u);
     if(!p.direct){const reqs=requests_();
@@ -643,6 +645,82 @@ function taskRequest_(r,u){need_(u.admin,'Only Youssef can approve changes.');co
     Object.assign(q,{state:dec==='approve'?'approved':'rejected',decided_by:u.name,decided_at:now_()});
     jwrite_('_task_requests.json',reqs.slice(-300));});
   return {board:boardFor_(u)};}
+
+/* ---------- 5c. Archive and delete forever (v3.9, Youssef 14 Nov) ---------- */
+// Archive = move the row from Tasks to the "Archive" tab of the same sheet (+ Archived on / Archived by). Both founders. Restore moves it back.
+// Delete forever = remove the row (from Tasks or Archive). Youssef only; the phone asks him to type DELETE.
+// Every move: preview -> copy -> check the copy -> remove the row -> check. Rows are removed from the bottom up.
+const ARCH_TAB='Archive',MOVE_OPS=['archive','delete','restore'],ARCH_SKIP=['archived on','archived by'];
+function bookOf_(which){return SpreadsheetApp.openById(which===STRAT?CFG.STRATEGY_SHEET_ID:CFG.BOARD_SHEET_ID);}
+function archSheet_(which,create){const ss=bookOf_(which);let a=ss.getSheetByName(ARCH_TAB);
+  if(!a&&create){const t=taskSheet_(which),h=t.getRange(1,1,1,t.getLastColumn()).getDisplayValues()[0];
+    a=ss.insertSheet(ARCH_TAB,ss.getSheets().length);a.getRange(1,1,1,h.length+2).setValues([h.concat(['Archived on','Archived by'])]);a.setFrozenRows(1);}
+  return a;}
+function tabTasks_(s){const n=s.getLastRow(),w=s.getLastColumn();if(n<1||w<1)return {h:[],tasks:[]};
+  const v=s.getRange(1,1,n,w).getDisplayValues(),h=v[0],m=taskMap_(h),ao=h.findIndex(x=>norm_(x)==='archived on'),ab=h.findIndex(x=>norm_(x)==='archived by');
+  const c=(r,k)=>m[k]>=0?String(r[m[k]]):'',out=[];
+  for(let i=1;i<v.length;i++){const r=v[i];if(!c(r,'title').trim())continue;
+    out.push({row:i+1,title:c(r,'title'),owner:c(r,'owner'),status:c(r,'status'),due:c(r,'due'),function:c(r,'function'),product:c(r,'product'),
+      done_date:c(r,'done'),notes:c(r,'notes').slice(0,1000),archived_on:ao>=0?String(r[ao]):'',archived_by:ab>=0?String(r[ab]):''});}
+  return {h:h,tasks:out};}
+function archiveList_(r,u){const which=r.which===STRAT?STRAT:'';if(which)need_(u.admin,'Only Youssef can see the Strategy Board.');
+  const a=archSheet_(which,false);let t=a?tabTasks_(a).tasks:[];if(!u.admin)t=t.filter(x=>!isLead_(x.function));
+  return {archived:t.reverse().slice(0,500),which:which,can_delete:!!u.admin};}
+function planMove_(r,u){const op=String(r.op||'');need_(MOVE_OPS.includes(op),'Invalid change.');
+  const which=r.board===STRAT?STRAT:'';if(which)need_(u.admin,'Only Youssef can see the Strategy Board.');
+  const from=r.from==='archive'?'archive':'tasks';
+  need_(op==='delete'||(op==='archive')===(from==='tasks'),'Invalid change.');
+  if(op==='delete')need_(u.admin,'Only Youssef can delete a task forever.');
+  const items=Array.isArray(r.items)?r.items:[{row:r.row,title:r.title}];need_(items.length>=1&&items.length<=300,'Pick 1 to 300 tasks.');
+  const s=from==='archive'?archSheet_(which,false):taskSheet_(which);need_(s,'There is no Archive tab yet.');
+  const all=tabTasks_(s).tasks,seen=u.admin?all:all.filter(t=>!isLead_(t.function)),picked=[];
+  items.forEach(it=>{const title=short_(String(it&&it.title||''),500);let t=seen.find(x=>x.row===Number(it.row)&&x.title===title);
+    if(!t){const same=seen.filter(x=>x.title===title);need_(same.length===1,'The Board changed. Refresh and try again.');t=same[0];}
+    if(!picked.includes(t))picked.push(t);});
+  if(r.all)picked.forEach(t=>need_(isClosed_(t.status),'"'+t.title+'" is not done or dropped any more. Refresh.'));
+  const n=picked.length,tn=n+' task'+(n===1?'':'s'),where=which?'Strategy Board':'Board';
+  const head=op==='archive'?'Move '+tn+' from Tasks to the Archive tab ('+where+' sheet). You can restore '+(n===1?'it':'them')+' later.'
+    :op==='restore'?'Move '+tn+' from the Archive tab back to Tasks ('+where+').'
+    :'Delete forever: '+tn+' from '+(from==='archive'?'the Archive tab':'Tasks')+' ('+where+'). This cannot be undone.';
+  const lines=[head].concat(picked.slice(0,15).map(t=>'• '+cut_(t.title,90)+(t.status?' ('+t.status+')':'')),n>15?['… and '+(n-15)+' more']:[]);
+  return {op:op,which:which,from:from,s:s,picked:picked,lines:lines};}
+function applyMove_(p,u){const s=p.s,count=l=>{const c={};l.forEach(t=>c[t.title]=(c[t.title]||0)+1);return c;},before=count(tabTasks_(s).tasks);
+  if(p.op!=='delete'){const dest=p.op==='archive'?archSheet_(p.which,true):taskSheet_(p.which);
+    const sh=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0];let dh=dest.getRange(1,1,1,dest.getLastColumn()).getDisplayValues()[0];
+    const miss=sh.filter(h=>String(h).trim()&&!ARCH_SKIP.includes(norm_(h))&&!dh.some(x=>norm_(x)===norm_(h)));
+    if(miss.length){need_(p.op==='archive','Tasks has no column "'+miss[0]+'". Add it in the sheet, then restore.');
+      dest.getRange(1,dh.length+1,1,miss.length).setValues([miss]);dh=dh.concat(miss);}
+    if(p.op==='archive')['Archived on','Archived by'].forEach(n=>{if(!dh.some(x=>norm_(x)===norm_(n))){dest.getRange(1,dh.length+1).setValue(n);dh=dh.concat([n]);}});
+    const destBefore=count(tabTasks_(dest).tasks);
+    const out=p.picked.slice().sort((a,b)=>a.row-b.row).map(t=>{const raw=s.getRange(t.row,1,1,sh.length).getValues()[0],a=new Array(dh.length).fill('');
+      sh.forEach((h,i)=>{const k=norm_(h);if(!k||ARCH_SKIP.includes(k))return;const j=dh.findIndex(x=>norm_(x)===k);if(j>=0)a[j]=typeof raw[i]==='string'?supCell_(raw[i]):raw[i];});
+      if(p.op==='archive'){a[dh.findIndex(x=>norm_(x)==='archived on')]="'"+date_();a[dh.findIndex(x=>norm_(x)==='archived by')]=u.name;}
+      return a;});
+    dest.getRange(dest.getLastRow()+1,1,out.length,dh.length).setValues(out);SpreadsheetApp.flush();
+    const da=count(tabTasks_(dest).tasks),need=count(p.picked);
+    Object.keys(need).forEach(k=>need_((da[k]||0)>=(destBefore[k]||0)+need[k],'Not verified: "'+k+'" was not copied. Nothing was removed. Check the sheet.'));}
+  // A sheet must keep one row under the frozen header rows.
+  if(s.getMaxRows()-p.picked.length<=s.getFrozenRows())s.insertRowsAfter(s.getMaxRows(),p.picked.length);
+  p.picked.map(t=>t.row).sort((a,b)=>b-a).forEach(r=>s.deleteRow(r));SpreadsheetApp.flush();
+  const after=count(tabTasks_(s).tasks),gone=count(p.picked);
+  Object.keys(gone).forEach(k=>need_((after[k]||0)===(before[k]||0)-gone[k],'Not verified: "'+k+'" is still in '+(p.from==='archive'?'the Archive tab':'Tasks')+'. Check the sheet.'));
+  console.log('Board '+p.op+' ('+p.from+') by '+u.name+': '+p.lines.join(' | '));
+  try{let L=[];try{L=jread_('_board_log.json',[]);}catch(e){}
+    p.picked.forEach(t=>L.push({at:now_(),title:t.title,owner:t.owner,op:p.op,by:u.name,lines:[p.lines[0]]}));jwrite_('_board_log.json',L.slice(-500));}
+  catch(e){console.error('board log: '+e);}
+  // Snapshot: archived / deleted tasks are not "removed in the sheet"; restored tasks are not "added in the sheet".
+  if(!p.which&&p.from==='tasks'||!p.which&&p.op==='restore'){try{const S=jread_('_board_snap.json',null);if(S){
+    p.picked.forEach(t=>{if(p.op==='restore'){S[norm_(t.title)]={t:t.title,s:t.status,o:t.owner,d:iso_(t.due)};if(isLead_(t.function))S[norm_(t.title)].l=1;}else delete S[norm_(t.title)];});
+    jwrite_('_board_snap.json',S);}}catch(e){console.error('snapshot: '+e);}}
+  const verb={archive:'archived',restore:'restored',delete:'deleted forever'}[p.op],pre=p.which?'(Strategy Board) ':'';
+  const lead=p.picked.filter(t=>p.which||isLead_(t.function)),pub=p.picked.filter(t=>!lead.includes(t));
+  const ev=(list,vis)=>list.length?[{by:u.name,kind:'board',vis:vis,title:list.length===1?list[0].title:undefined,
+    text:pre+u.name+' '+verb+(list.length===1?' "'+list[0].title+'"':' '+list.length+' tasks')+(p.op==='archive'&&list.length>1?' (done or dropped)':'')}]:[];
+  emit_(ev(pub,'all').concat(ev(lead,['Youssef'])));}
+function taskMove_(r,u){const which=r.board===STRAT?STRAT:'';
+  if(r.dry){const p=planMove_(r,u);return {plan:p.lines,direct:true,count:p.picked.length};}
+  lock_(()=>applyMove_(planMove_(r,u),u));
+  return {requested:false,board:boardFor_(u,which),archived:archiveList_({which:which},u).archived};}
 
 /* ---------- 6. Recent changes (activity) ---------- */
 // One list in _activity.json (last 1000). vis = 'all' or a list of names. Youssef sees everything; Ahmad sees
