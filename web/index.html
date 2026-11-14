@@ -116,6 +116,18 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .sup.dropped{opacity:.55}
 .orig{white-space:pre-wrap;font-size:13px;background:var(--soft);border-radius:10px;padding:10px 12px;unicode-bidi:plaintext;word-break:break-word}
 input:read-only{background:var(--soft);color:var(--mute)}
+/* v3.9: one change at a time. Bar at the top while it saves; other buttons wait (Capture and the tabs still work) */
+#jobBar{position:fixed;top:0;left:0;right:0;z-index:30;background:var(--ink);color:var(--bg);font-size:14px;padding:calc(env(safe-area-inset-top) + 10px) 16px 10px;box-shadow:0 2px 10px rgba(0,0,0,.2)}
+#jobBar .jt{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+#jobBar .jt span:last-child{flex:none;white-space:nowrap}
+#jobBar .jt span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;unicode-bidi:plaintext}
+#jobBar .js{font-size:12px;opacity:.7;margin-top:2px}
+#jobBar .jl{height:3px;margin-top:8px;border-radius:2px;background:rgba(244,241,236,.2);overflow:hidden;position:relative}
+#jobBar .jl i{position:absolute;top:0;bottom:0;width:35%;background:var(--bg);border-radius:2px;animation:jl 1.2s ease-in-out infinite}
+@keyframes jl{0%{left:-35%}100%{left:100%}}
+#jobBar.ok{background:var(--green)}#jobBar.err{background:var(--red)}
+body.busy .wrap :is(header,section:not(#vCap)) :is(button,input,select,textarea,label,.hrow,.sup,.chip),
+body.busy #sheet .in :is(button,input,select,textarea,label,.hrow,.chip):not(.esc){pointer-events:none;opacity:.5}
 </style>
 </head>
 <body>
@@ -444,10 +456,12 @@ async function applyReview(){
     (byCap[c.id]=byCap[c.id]||[]).push(Object.assign({id,decision,revision:x.revision},changed&&decision!=='reject'?{edits}:{}));});
   if(noTask.length)return toast('Pick the Board task for: '+noTask[0]);
   $('rApply').disabled=true;$('rApply').textContent='Saving…';
-  let bad=0;const fail=[];
-  for(const [cid,decisions] of Object.entries(byCap)){
-    try{const res=await call('confirm',{capture_id:cid,decisions},180000);upsert(res.capture);bad+=res.results.filter(r=>r.status==='uncertain').length;}
-    catch(e){fail.push(e.message);}}
+  let bad=0;const fail=[],n=Object.keys(reviewing.choice).length;
+  try{await job('Review · '+n+' item'+(n===1?'':'s'),async()=>{
+    for(const [cid,decisions] of Object.entries(byCap)){
+      try{const res=await call('confirm',{capture_id:cid,decisions},180000);upsert(res.capture);bad+=res.results.filter(r=>r.status==='uncertain').length;}
+      catch(e){fail.push(e.message);}}
+    if(fail.length)throw new Error(fail[0]);});}catch(e){if(!fail.length){$('rApply').disabled=false;$('rApply').textContent='Apply';return;}}
   closeSheet();renderList();
   toast(fail.length?'Some items did not save: '+fail[0]:bad?'Some items were NOT saved. Open History.':'Done.');}
 function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'&&!ME.admin);
@@ -633,7 +647,7 @@ async function preview(t,ch){const box=$('tWork');if(!box)return;box.innerHTML='
     <div class="btns"><button class="btn ghost" id="pNo">Cancel</button><button class="btn" id="pYes">${p.direct?'Confirm':'Send to Youssef'}</button></div>`;
   $('pNo').onclick=()=>openTask(t);
   $('pYes').onclick=async()=>{const b=$('pYes');b.disabled=true;b.textContent='Saving…';
-    try{const r=await call('task_change',body,60000);setBoard(r.board);closeSheet();toast(r.requested?'Sent to Youssef.':'Board updated and checked.');}
+    try{const r=await wcall(t.title+' · '+p.plan.join(' · '),'task_change',body,120000);setBoard(r.board);closeSheet();toast(r.requested?'Sent to Youssef.':'Board updated and checked.');}
     catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};}
 /* ---------- Archive and delete forever (v3.9). Preview first; delete forever: Youssef only, type DELETE ---------- */
 // The preview goes into #tWork (task screen, archive screen) or into a new sheet (Archive all).
@@ -647,7 +661,7 @@ async function movePreview(body,back){if(!$('tWork'))openSheet('<div class="deta
   if(del)$('pDel').oninput=()=>{$('pYes').disabled=$('pDel').value.trim()!=='DELETE';};
   $('pNo').onclick=back||closeSheet;
   $('pYes').onclick=async()=>{const b=$('pYes');if(del&&$('pDel').value.trim()!=='DELETE')return;b.disabled=true;b.textContent='Saving…';
-    try{const r=await call('task_change',body,180000);if(r.board&&(r.board.which||'')===(BOARD&&BOARD.which||''))setBoard(r.board);ARCH=r.archived||ARCH;closeSheet();
+    try{const r=await wcall(p.plan[0],'task_change',body,180000);if(r.board&&(r.board.which||'')===(BOARD&&BOARD.which||''))setBoard(r.board);ARCH=r.archived||ARCH;closeSheet();
       toast({archive:'Archived and checked.',restore:'Restored to the Board and checked.',delete:'Deleted forever.'}[body.op]);}
     catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};}
 function archiveAll(done){if(!done.length)return;
@@ -682,7 +696,7 @@ function openRequest(id){const q=(BOARD.requests||[]).find(x=>x.id===id);if(!q)r
     <div class="row" style="margin-top:10px"><button class="btn small ghost" id="qClose">Close</button></div></div>`);
   $('qClose').onclick=closeSheet;
   const go=async d=>{['qNo','qYes'].forEach(i=>$(i).disabled=true);
-    try{const r=await call('task_request',{id,decision:d},60000);setBoard(r.board);closeSheet();toast(d==='approve'?'Approved. Board updated.':'Rejected.');}
+    try{const r=await wcall((d==='approve'?'Approve':'Reject')+' change · '+q.title,'task_request',{id,decision:d},120000);setBoard(r.board);closeSheet();toast(d==='approve'?'Approved. Board updated.':'Rejected.');}
     catch(e){toast(e.message);closeSheet();loadBoard();}};
   if($('qYes')){$('qYes').onclick=()=>go('approve');$('qNo').onclick=()=>go('reject');}}
 $('bRefresh').onclick=loadBoard;
@@ -714,8 +728,8 @@ $('iList').onclick=e=>{const r=e.target.closest('[data-idea]');if(!r||!IDEAS)ret
     <p dir="auto"><b>${esc(x.summary)}</b></p>${x.notes?`<p dir="auto">${esc(x.notes)}</p>`:''}${by}
     <div class="row" style="margin-top:14px">${b.map(([op,l,c])=>`<button class="btn small ${c}" data-op="${op}">${l}</button>`).join('')}<button class="btn small ghost" id="iClose">Close</button></div></div>`);
   $('iClose').onclick=closeSheet;
-  $('sheetIn').querySelectorAll('[data-op]').forEach(btn=>btn.onclick=async()=>{$('sheetIn').querySelectorAll('[data-op]').forEach(z=>z.disabled=true);btn.textContent='Saving…';
-    try{IDEAS=await call('jam',{capture_id:cid,item_id:iid,op:btn.dataset.op},60000);LS.set('krude_ideas',JSON.stringify(IDEAS));closeSheet();renderIdeas();toast('Done.');}
+  $('sheetIn').querySelectorAll('[data-op]').forEach(btn=>btn.onclick=async()=>{$('sheetIn').querySelectorAll('[data-op]').forEach(z=>z.disabled=true);const lbl=btn.textContent;btn.textContent='Saving…';
+    try{IDEAS=await wcall(lbl+' · '+x.summary,'jam',{capture_id:cid,item_id:iid,op:btn.dataset.op},60000);LS.set('krude_ideas',JSON.stringify(IDEAS));closeSheet();renderIdeas();toast('Done.');}
     catch(err){toast(err.message);closeSheet();}});};
 $('iRefresh').onclick=loadIdeas;
 
@@ -755,7 +769,7 @@ async function openReport(){
     <div class="btns"><button class="btn ghost" id="rpX">Later</button><button class="btn" id="rpS">${r.sent?'Send again':'Send'}</button></div></div>`;
   $('rpX').onclick=closeSheet;
   $('rpS').onclick=async()=>{const b=$('rpS');b.disabled=true;b.textContent='Sending…';
-    try{const res=await call('report_send',{week:r.week,moved:$('rpM').value,blocked:$('rpB').value,decision:$('rpD').value},90000);
+    try{const res=await wcall('Weekly report','report_send',{week:r.week,moved:$('rpM').value,blocked:$('rpB').value,decision:$('rpD').value},90000);
       ME.report=res.state;LS.set('krude_me',JSON.stringify(ME));reportBanner();closeSheet();toast('Report sent.');}
     catch(e){b.disabled=false;b.textContent='Send';toast(e.message);}};}
 
@@ -902,7 +916,7 @@ function openSupplier(x){const add=!x,v=x||{},canPrice=!!(SUP&&SUP.can_price);su
     $('sNo').onclick=restore;
     $('sYes').onclick=async()=>{const b=$('sYes');b.disabled=true;b.textContent='Saving…';
       try{if(supPhoto)body.photo={data:b64(await supPhoto.arrayBuffer())};
-        const r=await call('supplier_change',body,120000);setSup(r);closeSheet();toast(add?'Supplier added and checked.':'Supplier saved and checked.');}
+        const r=await wcall((add?'Add supplier · ':'Save supplier · ')+(body.fields.name||'Unknown place'),'supplier_change',body,120000);setSup(r);closeSheet();toast(add?'Supplier added and checked.':'Supplier saved and checked.');}
       catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};};
   bind();
   function newCatBox(){$('sNewCat').innerHTML=`<div class="card" style="padding:12px;margin-top:10px"><div class="lbl" style="margin-top:0">New category</div><input id="ncName" dir="auto" placeholder="For example: Metal work">
@@ -916,7 +930,7 @@ function openSupplier(x){const add=!x,v=x||{},canPrice=!!(SUP&&SUP.can_price);su
           <div class="row" style="margin-top:8px"><button class="btn small" id="ncYes">Add category</button><button class="btn small ghost" id="ncX2">Cancel</button></div>`;
         $('ncX2').onclick=cancel;
         $('ncYes').onclick=async()=>{$('ncYes').disabled=true;$('ncYes').textContent='Saving…';
-          try{const r=await call('category',{op:'add',name},60000);SUP=r;LS.set('krude_sup',JSON.stringify(SUP));renderSup();
+          try{const r=await wcall('Add category · '+name,'category',{op:'add',name},60000);SUP=r;LS.set('krude_sup',JSON.stringify(SUP));renderSup();
             const c=r.categories.find(c=>catKey(c)===catKey(name))||name;$('sf_category').innerHTML=catOpts(c,true);$('sNewCat').innerHTML='';toast('Category added.');}
           catch(e){toast(e.message);$('ncYes').disabled=false;$('ncYes').textContent='Try again';}};}
       catch(e){toast(e.message);}};}}
@@ -937,10 +951,27 @@ function openCats(){if(!SUP)return;const cats=supCats(),n=c=>SUP.suppliers.filte
           <div class="row" style="margin-top:8px"><button class="btn small" id="cYes">Rename</button><button class="btn small ghost" id="cNo">Cancel</button></div>`;
         $('cNo').onclick=()=>{$('cWork').innerHTML='';};
         $('cYes').onclick=async()=>{$('cYes').disabled=true;$('cYes').textContent='Saving…';
-          try{const r=await call('category',{op:'rename',from,to},120000);if(SCAT===from){SCAT=to;LS.set('krude_scat',to);}setSup(r);toast('Renamed and checked.');openCats();}
+          try{const r=await wcall('Rename category · '+from+' → '+to,'category',{op:'rename',from,to},120000);if(SCAT===from){SCAT=to;LS.set('krude_scat',to);}setSup(r);toast('Renamed and checked.');if($('sheet').classList.contains('on'))openCats();}
           catch(e){toast(e.message);$('cYes').disabled=false;$('cYes').textContent='Try again';}};}
       catch(e){toast(e.message);}};});}
 
+/* ---------- one change at a time: progress bar at the top (v3.9) ---------- */
+// job(label, fn): runs one write. The sheet can be closed (it keeps saving). Other write buttons wait until it ends.
+let JOB=null,jobT=null;
+function jobBar(state,msg){let el=$('jobBar');if(!el){el=document.createElement('div');el.id='jobBar';document.body.appendChild(el);el.onclick=()=>{if(!JOB)el.remove();};}
+  clearInterval(jobT);el.className=state||'';
+  if(!state){const draw=()=>{if(!JOB)return;el.innerHTML=`<div class="jt"><span>Saving: ${esc(JOB.label)}</span><span>${Math.round((Date.now()-JOB.t0)/1000)} s</span></div>
+      <div class="js">Other changes wait until this is done. Capture still works.</div><div class="jl"><i></i></div>`;};draw();jobT=setInterval(draw,1000);return;}
+  el.innerHTML=`<div class="jt"><span>${state==='ok'?'✓ Saved: ':'Not saved: '}${esc(msg.label)}</span></div>${state==='err'?`<div class="js" style="opacity:.9">${esc(msg.err)} · Open it and try again. Tap to hide.</div>`:''}`;
+  jobT=setTimeout(()=>{if(!JOB&&$('jobBar'))$('jobBar').remove();},state==='ok'?3000:10000);}
+async function job(label,fn){if(JOB){toast('Wait: "'+JOB.label+'" is still saving.');throw new Error('Wait until the other change is saved.');}
+  JOB={label:String(label||'Change').slice(0,140),t0:Date.now()};document.body.classList.add('busy');jobBar();
+  const si=$('sheetIn');if($('sheet').classList.contains('on')&&si&&!$('jobHide')){si.insertAdjacentHTML('afterbegin','<button class="btn ghost esc" id="jobHide" style="margin-bottom:12px">Close · it keeps saving</button>');$('jobHide').onclick=closeSheet;}
+  const l=JOB.label;
+  try{const r=await fn();JOB=null;jobBar('ok',{label:l});return r;}
+  catch(e){JOB=null;jobBar('err',{label:l,err:e.message});throw e;}
+  finally{JOB=null;document.body.classList.remove('busy');const h=$('jobHide');if(h)h.remove();}}
+const wcall=(label,action,body,ms)=>job(label,()=>call(action,body,ms));
 /* ---------- shell ---------- */
 function openSheet(html){$('sheetIn').innerHTML=html;$('sheet').classList.add('on');}
 function closeSheet(){$('sheet').classList.remove('on');clearInterval(progressT);}
