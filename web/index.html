@@ -86,6 +86,11 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .hrow .m{flex:1;min-width:0}
 .hrow .t{font-size:15px;unicode-bidi:plaintext}
 .hrow .d{font-size:12px;color:var(--mute);margin-top:3px}
+.grp{border:1px solid #cfc8bc;border-radius:12px;background:var(--card);padding:0 12px;margin:14px 0 0}
+.grp .ghead{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);padding:10px 0 8px;border-bottom:1px solid #cfc8bc}
+.grp .ghead .n{font-weight:600;color:var(--mute)}
+.grp.over{border-color:var(--red)}.grp.over .ghead{color:var(--red);border-bottom-color:var(--red)}
+.grp .hrow:last-child{border-bottom:none}
 .sec{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:18px 0 4px}
 .task.over .d{color:var(--red)}
 .task.done .t{color:var(--mute);text-decoration:line-through}
@@ -492,7 +497,8 @@ function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
     const bits=[t.owner||'No owner',t.due?(over?'Overdue · ':'')+t.due:'',BGROUP!=='Product'?t.product:'',BGROUP!=='Function'?t.function:''].filter(Boolean);
     return `<div class="hrow task ${over?'over':''} ${isDone(t)?'done':''}" data-row="${t.row}"><div class="m"><div class="t">${esc(t.title)}</div>
     <div class="d">${bits.map(esc).join(' · ')}</div></div><span class="pill ${st}">${esc(t.status||'—')}</span></div>`;};
-  const sec=(name,list,always,empty)=>list.length||always?`<div class="sec">${esc(name)} · ${list.length}</div>`+(list.map(row).join('')||`<div class="empty" style="padding:12px 0">${empty||'Nothing here.'}</div>`):'';
+  // Each group in a thin grey box with a clear heading (Youssef, 14 Nov). Overdue box is red.
+  const sec=(name,list,always,empty)=>list.length||always?`<div class="grp ${name==='Overdue'?'over':''}"><div class="ghead"><span>${esc(name)}</span><span class="n">${list.length}</span></div>`+(list.map(row).join('')||`<div class="empty" style="padding:12px 0">${empty||'Nothing here.'}</div>`)+'</div>':'';
   let body='';
   if(BGROUP==='Date'){const d0=new Date(today+'T00:00:00Z'),dow=d0.getUTCDay(),add=n=>{const d=new Date(d0);d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
     const sat=add(6-dow),sat2=add(13-dow),B={Overdue:[],Today:[],'This week':[],'Next week':[],Later:[],'No due date':[]};
