@@ -85,8 +85,8 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 
 ## Open items
 
-- Records: "Handoff - 2026-11-14 - KRUDE Capture v3.7: D1, D2, D3 and Leadership decided" (KRUDE Operations root) waits for ChatGPT. It adds the three decisions to the Decision Log and closes the two Kickoff questions in 00 - State. (The v3.6 close handoff is DONE.)
-- v3.8 live 14 Nov (backend deployed by Youssef, app merged to main). Youssef tests a capture that changes a task. Then: handoff to add the v3.8 rule to the Decision Log.
+- Records: "Handoff - 2026-11-14 - Close of KRUDE Capture v3.8 session" (KRUDE Operations root) waits for ChatGPT: v3.8 rule in the Decision Log, State to "v3.8 live", two Capture Inbox lines (test + rollback). The v3.6 and v3.7 handoffs are DONE.
+- v3.8 live 14 Nov (backend deployed by Youssef, app on main). First real test of a capture that changes a task: not reported yet.
 - WhatsApp backfill: Youssef ran it in ChatGPT; he has the .xlsx and a reminder to review it (Capture Inbox 14 Nov).
 - Ahmad's test feedback: not received yet.
 
