@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.5;
+const VERSION=3.6;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -134,6 +134,7 @@ function doPost(e){try{
  if(r.action==='report_send')return json_({ok:true,...reportSend_(r,u)});
  if(r.action==='reports')return json_({ok:true,...reports_(u)});
  if(r.action==='activity')return json_({ok:true,...activity_(u)});
+ if(r.action==='lists')return json_({ok:true,...lists_(r)});
  if(r.action==='upload')return json_({ok:true,...upload_(r,u)});
  if(r.action==='review')return json_({ok:true,...review_(r,u)});
  if(r.action==='confirm')return json_({ok:true,...confirm_(r,u)});
@@ -612,3 +613,12 @@ function boardDiff_(b){let old=null;try{old=jread_('_board_snap.json',null);}cat
     Object.keys(old).forEach(k=>{if(!cur[k])E(old[k].t,'Task renamed or removed in the sheet: '+old[k].t);});
     emit_(ev.length>25?[{by:'Sheet',kind:'sheet',vis:'all',text:ev.length+' changes in the Board sheet (for example by a stand-up)'}]:ev);}
   if(!old||JSON.stringify(old)!==JSON.stringify(cur))jwrite_('_board_snap.json',cur);}
+
+/* ---------- 7. Read-only lists for both founders: Week goals, Products (Pipeline), Suppliers ---------- */
+// Ahmad has no Drive access; these give him (and Youssef on the phone) a read-only view. Edits stay in the sheets / through Capture.
+function rowsOf_(id,tab){const ss=SpreadsheetApp.openById(id),t=tab?ss.getSheetByName(tab):ss.getSheets()[0];need_(t,'Missing tab: '+tab);
+  const n=t.getLastRow(),w=t.getLastColumn();if(n<1||w<1)return {headers:[],rows:[]};
+  const v=t.getRange(1,1,n,w).getDisplayValues();return {headers:v[0],rows:v.slice(1).filter(r=>r.some(x=>String(x).trim()))};}
+function lists_(r){const k=String(r.list||'');need_(['week','products','suppliers'].includes(k),'Unknown list.');
+  const d=k==='week'?rowsOf_(CFG.BOARD_SHEET_ID,'Week'):k==='products'?rowsOf_(CFG.BOARD_SHEET_ID,'Pipeline'):rowsOf_(props_().getProperty('SUPPLIERS_SHEET_ID'));
+  return {list:k,headers:d.headers,rows:d.rows.slice(0,500).map(x=>x.map(c=>String(c).slice(0,1000))),today:date_()};}

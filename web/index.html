@@ -107,6 +107,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
     <button class="whoBtn" id="who" aria-label="Reports and costs"></button></div></header>
   <div id="banners"></div>
   <div id="rBanner"></div>
+  <div id="vBanner"></div>
 
   <!-- SETUP -->
   <section id="vSetup" class="hide">
@@ -166,12 +167,20 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 
   <!-- BOARD -->
   <section id="vBoard" class="hide">
+    <div class="seg" id="bView" style="grid-template-columns:repeat(4,1fr);margin:0 0 12px"><button data-view="tasks">Tasks</button><button data-view="week">Week</button><button data-view="products">Products</button><button data-view="suppliers">Suppliers</button></div>
+    <div id="bTasks">
     <div class="seg hide" id="bWhich" style="grid-template-columns:1fr 1fr;margin:0 0 10px"><button data-which="">Shared board</button><button data-which="strategy">Strategy (private)</button></div>
     <input id="bQ" type="search" dir="auto" placeholder="Search tasks" style="margin-bottom:10px">
     <div class="row" id="bFilters" style="margin-bottom:8px"></div>
     <div class="row" id="bFilters2" style="margin-bottom:12px"></div>
     <div id="bList"></div>
     <div style="text-align:center"><button class="link" id="bRefresh">Refresh</button></div>
+    </div>
+    <div id="bOther" class="hide">
+      <input id="oQ" type="search" dir="auto" placeholder="Search" style="margin-bottom:10px">
+      <div id="oList"></div>
+      <div style="text-align:center"><button class="link" id="oRefresh">Refresh</button></div>
+    </div>
   </section>
 </div>
 
@@ -189,7 +198,9 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 const API_URL = 'https://script.google.com/macros/s/AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA/exec';
 /* ======================================================================================== */
 
+const APP_VERSION=3.6; // raise with every release; the server (Code.js VERSION) should match
 const $=id=>document.getElementById(id);
+let SERVER_V=0;
 const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
 const uuid=()=>(crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)}));
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -308,7 +319,7 @@ async function updateStrip(){const all=await DB.all('outbox');const n=all.filter
   const b=$('sendNow');if(b)b.onclick=()=>{flush().then(()=>toast('Done.'))};}
 addEventListener('online',()=>{updateStrip();flush();});addEventListener('offline',updateStrip);document.addEventListener('visibilitychange',()=>{if(document.hidden||!ME)return;flush();
   // Fresh data each time the app comes back (Board changes made in the sheet or by the other founder).
-  loadActivity();if(CUR==='board')loadBoard();else if(CUR==='items')loadList();else if(CUR==='ideas')loadIdeas();});setInterval(flush,60000);
+  loadActivity();if(CUR==='board'){if(BVIEW==='tasks')loadBoard();else loadSheetList(BVIEW);}else if(CUR==='items')loadList();else if(CUR==='ideas')loadIdeas();});setInterval(flush,60000);
 
 /* ---------- review ---------- */
 let progressT=null;
@@ -606,7 +617,8 @@ function openMe(){if(!ME)return;
     <button class="btn" id="mReport">Write weekly report</button>
     ${ME.admin?'<div class="lbl">OpenAI cost per month</div><div id="mCost" class="who">Loading…</div>':''}
     <div class="lbl">${ME.admin?'Weekly reports':'My weekly reports'}</div><div id="mReps" class="who">Loading…</div>
-    <div class="row" style="margin-top:14px"><button class="btn small ghost" id="mClose">Close</button></div></div>`);
+    <p class="who" style="margin-top:14px">App v${APP_VERSION} · Server v${SERVER_V||'?'}</p>
+    <div class="row" style="margin-top:6px"><button class="btn small ghost" id="mClose">Close</button></div></div>`);
   $('mClose').onclick=closeSheet;$('mReport').onclick=openReport;
   const put=(id,html)=>{const el=$(id);if(el){el.className='';el.innerHTML=html;}};
   call('reports',{},60000).then(r=>put('mReps',r.reports.length?r.reports.map(repHTML).join(''):'<div class="who">No reports yet.</div>')).catch(e=>put('mReps',`<div class="who">${esc(e.message)}</div>`));
@@ -654,6 +666,40 @@ async function openActivity(){if(!ME)return;const seen=seenAt();
 $('bell').onclick=openActivity;
 setInterval(()=>{if(!document.hidden&&ME)loadActivity();},120000);
 
+/* ---------- Board tab views: Week goals, Products (Pipeline), Suppliers. Read-only, from the sheets ---------- */
+let BVIEW=LS.get('krude_bview')||'tasks';const LISTS={};
+try{Object.assign(LISTS,JSON.parse(LS.get('krude_lists')||'{}'))}catch(e){}
+function setView(v){BVIEW=v;LS.set('krude_bview',v);$('bView').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.view===v));
+  $('bTasks').classList.toggle('hide',v!=='tasks');$('bOther').classList.toggle('hide',v==='tasks');
+  if(v==='tasks'){renderBoard();loadBoard();}else{renderOther();loadSheetList(v);}}
+async function loadSheetList(k){try{LISTS[k]=await call('lists',{list:k},60000);LS.set('krude_lists',JSON.stringify(LISTS));if(BVIEW===k)renderOther();}
+  catch(e){toast(e.message);}}
+function renderOther(){const k=BVIEW,d=LISTS[k];$('oQ').placeholder={week:'Search goals',products:'Search products',suppliers:'Search suppliers'}[k]||'Search';
+  if(!d){$('oList').innerHTML='<div class="empty">Loading…</div>';return;}
+  const q=$('oQ').value.trim().toLowerCase(),hit=r=>!q||r.join(' ').toLowerCase().includes(q);
+  const g=(r,names)=>{const i=d.headers.findIndex(h=>names.includes(String(h).trim().toLowerCase()));return i>=0?String(r[i]||'').trim():'';};
+  const card='class="card" style="padding:12px 14px"',sub='style="font-size:12px;color:var(--mute);margin:2px 0 6px"';
+  let html='';
+  if(k==='week'){const wk=r=>g(r,['week start','week']);const ws=[...new Set(d.rows.map(wk))].sort().reverse();
+    html=ws.map(w=>{const rs=d.rows.filter(r=>wk(r)===w&&hit(r));if(!rs.length)return '';
+      return `<div class="sec">Week of ${esc(w||'—')}</div>`+rs.map(r=>`<div class="hrow"><div class="m"><div class="t" dir="auto">${esc(g(r,['goal']))}</div>
+        <div class="d">${esc(g(r,['owner'])||'No owner')}</div></div><span class="pill ${/done/i.test(g(r,['status']))?'ok':''}">${esc(g(r,['status'])||'—')}</span></div>`).join('');}).join('');}
+  if(k==='products')html=d.rows.filter(hit).map(r=>{const bl=g(r,['blocker']);
+    return `<div ${card}><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b dir="auto">${esc(g(r,['product']))}</b><span class="pill">${esc(g(r,['stage'])||'—')}</span></div>
+      <div ${sub}>${esc([g(r,['line']),g(r,['owner']),g(r,['due'])?'Due '+g(r,['due']):'',g(r,['last updated'])?'Updated '+g(r,['last updated']):''].filter(Boolean).join(' · '))}</div>
+      <p style="margin:4px 0" dir="auto"><b>Next:</b> ${esc(g(r,['next step'])||'—')}</p>
+      ${bl&&!/^none$/i.test(bl)?`<p style="margin:4px 0;color:var(--red)" dir="auto"><b>Blocker:</b> ${esc(bl)}</p>`:''}</div>`;}).join('');
+  if(k==='suppliers')html=d.rows.filter(hit).map(r=>{const ph=g(r,['phone']),notes=g(r,['notes']).replace(/\[capture-item:[^\]]*\]/g,'').trim();
+    return `<div ${card}><b dir="auto">${esc(g(r,['name'])||'—')}</b>
+      <div ${sub} dir="auto">${esc([g(r,['sells']),g(r,['place'])].filter(Boolean).join(' · '))}</div>
+      ${ph?`<p style="margin:4px 0"><a href="tel:${esc(ph.replace(/[^\d+]/g,''))}">${esc(ph)}</a></p>`:''}
+      ${g(r,['price'])?`<p style="margin:4px 0" dir="auto">Price: ${esc(g(r,['price']))}</p>`:''}
+      ${notes?`<p style="margin:4px 0;font-size:13px" dir="auto">${esc(notes)}</p>`:''}
+      <div ${sub}>${esc([g(r,['added by'])?'Added by '+g(r,['added by']):'',g(r,['date'])].filter(Boolean).join(' · '))}</div></div>`;}).join('');
+  $('oList').innerHTML=html||`<div class="empty">${k==='suppliers'?'No suppliers yet. Capture one, for example: "Supplier Hassan, 010…, sells felt".':'Nothing here.'}</div>`;}
+$('bView').onclick=e=>{const v=e.target.dataset.view;if(v)setView(v);};
+$('oQ').oninput=renderOther;$('oRefresh').onclick=()=>loadSheetList(BVIEW);
+
 /* ---------- shell ---------- */
 function openSheet(html){$('sheetIn').innerHTML=html;$('sheet').classList.add('on');}
 function closeSheet(){$('sheet').classList.remove('on');clearInterval(progressT);}
@@ -663,7 +709,7 @@ let toastT;function toast(msg){let el=$('toast');if(!el){el=document.createEleme
 const TABS={cap:['vCap','tCap'],items:['vHist','tItems'],ideas:['vIdeas','tIdeas'],board:['vBoard','tBoard']};
 let CUR='cap';
 function tab(name){CUR=name;Object.entries(TABS).forEach(([k,[v,t]])=>{$(v).classList.toggle('hide',k!==name);$(t).classList.toggle('on',k===name);});
-  if(name==='items'){renderList();loadList();}if(name==='ideas'){renderIdeas();loadIdeas();}if(name==='board'){renderBoard();loadBoard();}}
+  if(name==='items'){renderList();loadList();}if(name==='ideas'){renderIdeas();loadIdeas();}if(name==='board')setView(BVIEW);}
 Object.entries(TABS).forEach(([k,[,t]])=>$(t).onclick=()=>tab(k));
 function needSetup(msg){['vCap','vHist','vIdeas','vBoard','nav'].forEach(i=>$(i).classList.add('hide'));$('vSetup').classList.remove('hide');
   $('setApiWrap').classList.toggle('hide',!!API_URL);$('setKey').value='';if(msg)$('banners').innerHTML=`<div class="banner err">${esc(msg)}</div>`;}
@@ -682,13 +728,14 @@ async function recover(){const recs=(await DB.all('recs')).filter(r=>!rec||r.id!
 async function start(){
   if(!api()||!key())return needSetup(api()?'':'');
   $('vSetup').classList.add('hide');$('banners').innerHTML='';
-  try{const r=await call('identity',{},30000);ME=r.user;LS.set('krude_me',JSON.stringify(ME));}
+  try{const r=await call('identity',{},30000);ME=r.user;SERVER_V=Number(r.version)||0;LS.set('krude_me',JSON.stringify(ME));}
   catch(e){if(/wrong key/i.test(e.message))return needSetup('This link key does not work. Ask Youssef for a new link.');
     ME=JSON.parse(LS.get('krude_me')||'null');if(!ME)return needSetup(e.message);toast('Offline. You can still record.');}
   $('who').textContent=ME.name;reportBanner();['vCap','nav'].forEach(i=>$(i).classList.remove('hide'));tab('cap');
   renderHints();renderThumbs();canSave();updateStrip();recover();flush();
   if(ME.admin)loadBoard(); // shows the badge when Ahmad's changes wait
   actBadge();loadActivity();
+  $('vBanner').innerHTML=ME.admin&&SERVER_V&&SERVER_V<APP_VERSION?`<div class="banner">The server runs v${SERVER_V}, the app v${APP_VERSION}. Paste the new Code.js in Apps Script and deploy a New version.</div>`:'';
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 }
 start();

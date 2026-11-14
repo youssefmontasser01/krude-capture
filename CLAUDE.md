@@ -1,7 +1,7 @@
 # KRUDE Capture
 
 Phone web app for the two KRUDE co-founders: Youssef (Co-founder · Product, admin) and Ahmad (Co-founder · Market).
-Four tabs: **Capture** (voice/text/photo in), **History** (every captured item, search + filters), **Ideas** (my ideas + the shared jam list), **Board** (live read of KRUDE Board v2 › Tasks; change status, edit or drop a task, always with a preview first).
+Four tabs: **Capture** (voice/text/photo in), **History** (every captured item, search + filters), **Ideas** (my ideas + the shared jam list), **Board** (Tasks: live read of KRUDE Board v2 › Tasks; change status, edit or drop a task, always with a preview first. Week · Products · Suppliers: read-only views of the Week tab, the Pipeline tab and "20 - Suppliers and Contacts").
 Tap your name (top right) for the **weekly report** and, for Youssef, the **OpenAI cost** per month. The **bell** shows **Recent changes** (Today / This week).
 
 Always write the brand as **KRUDE** in files and UI. Never "Crude".
@@ -11,6 +11,7 @@ Write replies to Youssef in ASD-STE100 Simplified Technical English. Keep them s
 
 ```
 web/index.html          the whole phone app (one file, no build). Cloudflare Workers serves /web
+web/_headers            Cache-Control: no-cache (iPhone Home Screen apps must fetch new versions)
 wrangler.jsonc          Cloudflare settings: publish /web only. Each push to main deploys
                         Live app: https://krude-capture.youssefshaker36.workers.dev (private link: /#k=<key>)
 apps-script/Code.js     backend (Google Apps Script web app). Pushed with clasp
@@ -22,7 +23,7 @@ CLAUDE.md               this file
 
 - `index.html` POSTs JSON (`Content-Type: text/plain`, no preflight) to the Apps Script `/exec` URL in `const API_URL` (about line 180). Never change that URL unless Youssef gives a new one.
 - Auth: a private link key (`#k=...`). The backend compares SHA-256 hashes in Script Properties `KEY_YOUSSEF_HASH`, `KEY_AHMAD_HASH`. New key: run `newKeyForYoussef` / `newKeyForAhmad` in the Apps Script editor.
-- Actions: `identity`, `upload`, `review`, `confirm`, `list`, `board`, `set_status`, `ideas`, `jam`, `report_draft`, `report_send`, `reports`, `costs`, `task_change` (status / edit / drop; `dry:true` = preview only), `task_request` (Youssef approves or rejects Ahmad's requests), `activity` (Recent changes). `set_status` stays for old phones.
+- Actions: `identity`, `upload`, `review`, `confirm`, `list`, `board`, `set_status`, `ideas`, `jam`, `report_draft`, `report_send`, `reports`, `costs`, `task_change` (status / edit / drop; `dry:true` = preview only), `task_request` (Youssef approves or rejects Ahmad's requests), `activity` (Recent changes), `lists` (read-only Week / Products / Suppliers). `set_status` stays for old phones.
 - **Save** = `upload` only (fast). A 5-minute trigger `processPending` transcribes, writes the line in "18 - Capture Inbox", and sorts.
   **Save & Review** = `upload`, then `review` at once, then the user approves / keeps / rejects each item (`confirm`).
 - One JSON state file per capture: `cap_<Owner>_<id>.json` in `KRUDE Capture Drop/_Capture State`. Media in a folder per capture in `KRUDE Capture Drop`.
@@ -63,7 +64,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 
 ## Workflow for every change
 
-1. Edit the files.
+1. Edit the files. Raise `APP_VERSION` (web/index.html) and `VERSION` (Code.js) together. Youssef sees "App vX · Server vY" in the Me screen and a banner when the server is older than the app.
 2. Check syntax: `node --check` on the script part of `web/index.html` and on `apps-script/Code.js`.
 3. For UI changes, test in a browser with a mocked API if you can (Playwright), at 390×844.
 4. Frontend: `git add -A && git commit -m "<what changed>" && git push` → Cloudflare (Workers Builds, `npx wrangler deploy`) deploys in about 1 minute.
