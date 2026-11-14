@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.3;
+const VERSION=3.4;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -104,7 +104,7 @@ function jwrite_(name,v){const f=jfile_(name),s=JSON.stringify(v);
 // The cap_*.json files stay the source of truth. The index is a copy and can be rebuilt at any time.
 function slim_(c){return {id:c.id,owner:c.owner,created:c.created,hint:c.hint,text:c.text,transcript:c.transcript,
   audio:c.audio?{mime:c.audio.mime}:null,photos:(c.photos||[]).map(p=>({url:p.url})),status:c.status,error:c.error||'',
-  processing_until:c.processing_until||null,items:c.items||null,cost:c.cost||null};}
+  processing_until:c.processing_until||null,items:c.items||null,cost:c.cost||null,inbox:!!c.inbox};}
 function idxRebuild_(){const caps=[];capFiles_('cap_').forEach(f=>{try{caps.push(slim_(JSON.parse(f.getBlob().getDataAsString())));}catch(e){console.error('index skip '+f.getName()+': '+e);}});
   caps.sort((a,b)=>b.created.localeCompare(a.created));const x={v:1,built:now_(),caps:caps.slice(0,CFG.INDEX_MAX)};
   jwrite_('_index.json',x);props_().deleteProperty('INDEX_STALE');return x;}
@@ -132,6 +132,7 @@ function doPost(e){try{
  if(r.action==='report_draft')return json_({ok:true,...reportDraft_(u)});
  if(r.action==='report_send')return json_({ok:true,...reportSend_(r,u)});
  if(r.action==='reports')return json_({ok:true,...reports_(u)});
+ if(r.action==='activity')return json_({ok:true,...activity_(u)});
  if(r.action==='upload')return json_({ok:true,...upload_(r,u)});
  if(r.action==='review')return json_({ok:true,...review_(r,u)});
  if(r.action==='confirm')return json_({ok:true,...confirm_(r,u)});
@@ -184,21 +185,30 @@ function work_(cid,u){
   try{
     if(c.audio&&!c.transcript){const t=transcribe_(DriveApp.getFileById(c.audio.id).getBlob(),c.audio.secs);pay(t.cost);
       c.transcript=t.text||'(no speech found)';c.status='transcribed';putCap_(c,u);}
-    if(!c.inbox){inbox_(c,null);c.inbox=true;putCap_(c,u);}
     const sorted=sortItems_(c);pay(sorted.cost);
-    return lock_(()=>{const s=loadCap_(c.id,u),first=!s.c.items;s.c.transcript=c.transcript;s.c.inbox=true;s.c.cost=c.cost;
-      if(first){s.c.items=sorted.items.map(x=>Object.assign(validateItem_(x,c.id),{id:Utilities.getUuid(),status:'proposed',revision:1}));}
+    const done=lock_(()=>{const s=loadCap_(c.id,u),first=!s.c.items;s.c.transcript=c.transcript;s.c.cost=c.cost;
+      if(first){s.c.items=sorted.items.map(x=>Object.assign(validateItem_(x,c.id),{id:Utilities.getUuid(),status:'proposed',revision:1}));
+        emit_(s.c.items.map(x=>({by:s.c.owner,kind:'capture',vis:[s.c.owner],cid:s.c.id,text:s.c.owner+' captured '+aWord_(x.kind)+': '+x.summary})));}
       s.c.status='ready';s.c.error='';s.c.processing_until=null;saveCap_(s);ledger_(spent,first);return s.c;});
-  }catch(e){lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=s.c.transcript||c.transcript;s.c.inbox=s.c.inbox||c.inbox;s.c.cost=c.cost||s.c.cost||null;
+    // The Inbox line is written after sorting, so the founder sees the items sooner. If it fails, the 5-minute job tries again.
+    if(!done.inbox)inboxLine_(done,u);
+    return done;
+  }catch(e){if(!c.inbox)inboxLine_(c,u); // keep a record of the capture even when sorting failed
+    lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=s.c.transcript||c.transcript;s.c.inbox=s.c.inbox||c.inbox;s.c.cost=c.cost||s.c.cost||null;
       s.c.processing_until=null;s.c.error=String(e.message||e).slice(0,200);saveCap_(s);ledger_(spent,false);});throw e;}
 }
+function inboxLine_(c,u){try{inbox_(c,null);lock_(()=>{const s=loadCap_(c.id,u);s.c.inbox=true;saveCap_(s);});c.inbox=true;}
+  catch(e){console.error('inbox line '+c.id+': '+e);}}
 function putCap_(c,u){lock_(()=>{const s=loadCap_(c.id,u);s.c.transcript=c.transcript;s.c.inbox=c.inbox;s.c.status=c.status;s.c.cost=c.cost||null;saveCap_(s,true);});}
 function review_(r,u){const c=work_(id_(r.capture_id),u);return {capture:public_(c,u)};}
 // Trigger: every 5 minutes. Works on "Save" captures. Stops before the 6-minute limit.
 function processPending(){
   const start=Date.now(),admin={name:'Youssef',admin:true},since=new Date(Date.now()-30*86400000).toISOString();
   // Errors wait for a manual Retry on the phone. Oldest first.
-  const todo=idx_().caps.filter(c=>!c.items&&!c.error&&c.created>since).reverse();
+  const caps=idx_().caps;
+  // Inbox lines that failed after sorting: write them now.
+  caps.filter(c=>c.items&&c.inbox===false&&c.created>since).forEach(c=>{try{const s=loadCap_(c.id,admin);if(!s.c.inbox)inboxLine_(s.c,admin);}catch(e){console.error(e);}});
+  const todo=caps.filter(c=>!c.items&&!c.error&&c.created>since).reverse();
   for(const c of todo){if(Date.now()-start>240000)break;
     try{work_(c.id,admin);}catch(e){console.error('processPending '+c.id+': '+e);}}
 }
@@ -239,8 +249,9 @@ function context_(){
   const pick=(t,names)=>{const idx=t.headers.map((h,i)=>names.includes(norm_(h))?i:-1).filter(i=>i>=0);
     return {headers:idx.map(i=>t.headers[i]),rows:t.rows.map(r=>idx.map(i=>r[i]))};};
   const board=table_(CFG.BOARD_SHEET_ID,'Tasks'),sup=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
+  let products=[];try{products=table_(CFG.BOARD_SHEET_ID,'Pipeline').rows.map(r=>r[0]).filter(Boolean);}catch(e){}
   return {board_tasks:pick(board,['task','task name','title','name','product','owner','status','function','due','due date','week']),
-          suppliers:pick(sup,['name','sells','place'])};
+          suppliers:pick(sup,['name','sells','place']),products:products};
 }
 function schema_(){const fp={};FIELD_NAMES.forEach(k=>fp[k]={type:'string'});fp.function={type:'string',enum:FUNCTIONS.concat([''])};
   const obj={entry_id:{type:'string'},kind:{type:'string',enum:KINDS},summary:{type:'string'},destination:{type:'string',enum:DESTS},
@@ -315,18 +326,23 @@ function append_(c,x){const marker='[capture-item:'+x.id+']';let dest=route_(x);
      const miss=[x.fields.owner?'':'owner',due?'':'due date'].filter(Boolean);
      const v=Object.assign({},x.fields,{due_date:due||x.fields.due_date,week:sunday_(due?new Date(due+'T12:00:00Z'):new Date()),status:'To do',
        notes:((miss.length?'Check: no '+miss.join(', ')+'. ':'')+(x.fields.notes||'')+' Capture '+date_()+' '+c.owner+' '+marker).trim()});
-     t.sheet.appendRow(t.headers.map(h=>{const k=Object.keys(A).find(k=>A[k].includes(norm_(h)));return cleanCell_(k?v[k]:'');}));SpreadsheetApp.flush();return 'Saved to Board Tasks';}}
+     t.sheet.appendRow(t.headers.map(h=>{const k=Object.keys(A).find(k=>A[k].includes(norm_(h)));return cleanCell_(k?v[k]:'');}));SpreadsheetApp.flush();
+     snapPatch_(null,{title:v.title,status:'To do',owner:v.owner,due:v.due_date});
+     return 'Saved to Board Tasks';}}
  if(dest==='supplier'){const t=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
    if(isDuplicate_(t,x.fields.name,['name'])){x.operation='update';x.existing_record='Exact supplier name: '+x.fields.name;dest='handoff';}
    else{const m={'date':date_(),'name':x.fields.name,'phone':x.fields.phone,'sells':x.fields.sells,'price':x.fields.price,'place':x.fields.place,'notes':x.fields.notes+' '+marker,'added by':c.owner,'photo link':c.photos.map(p=>p.url).join(' ')};
      need_(t.headers.every(h=>Object.prototype.hasOwnProperty.call(m,norm_(h))),'Supplier headers changed. Use a handoff.');
      t.sheet.appendRow(t.headers.map(h=>cleanCell_(m[norm_(h)])));SpreadsheetApp.flush();return 'Saved to Suppliers and Contacts';}}
- if(dest==='handoff'){if(!c.handoff_id){const title='Handoff - '+date_()+' - Capture '+c.owner+' - '+c.id;const folder=DriveApp.getFolderById(CFG.HANDOFFS_FOLDER_ID),it=folder.getFilesByName(title);
-     if(it.hasNext())c.handoff_id=it.next().getId();else{const doc=DocumentApp.create(title);doc.getBody().setText('KRUDE Capture handoff\nCapture: '+c.id+'\nAppend only. Review proposed changes before applying them.');doc.saveAndClose();DriveApp.getFileById(doc.getId()).moveTo(folder);c.handoff_id=doc.getId();}}
-   const d=DocumentApp.openById(c.handoff_id),body=d.getBody();
+ if(dest==='handoff'){// One open handoff doc per day for all approved Capture items (ChatGPT renames it DONE when applied).
+   const title='Handoff - '+date_()+' - KRUDE Capture items',folder=DriveApp.getFolderById(CFG.OPS_FOLDER_ID),it=folder.getFilesByName(title);let id;
+   if(it.hasNext())id=it.next().getId();else{const doc=DocumentApp.create(title);
+     doc.getBody().setText('KRUDE Capture handoff - all approved Capture items of '+date_()+' that are not Board tasks or new suppliers.\nFollow 10 - Claude Handoff Instructions. Append only. One block per item.');
+     doc.saveAndClose();DriveApp.getFileById(doc.getId()).moveTo(folder);id=doc.getId();}
+   c.handoff_id=id;const d=DocumentApp.openById(id),body=d.getBody();
    if(!body.getText().includes(marker)){body.appendParagraph(marker+' '+x.summary);body.appendParagraph('Destination: '+x.destination+' | Operation: '+x.operation+' | Existing: '+x.existing_record);
      body.appendParagraph(x.destination==='decision_log_candidate'?'ChatGPT - to confirm':'ChatGPT - to apply after review');body.appendParagraph(JSON.stringify(x.fields));
-     body.appendParagraph('Source capture: '+c.id+' | Approved: '+x.approved_by);}
+     body.appendParagraph('Source capture: '+c.id+' | From: '+c.owner+' | Approved: '+x.approved_by);body.appendParagraph('');}
    d.saveAndClose();return 'Sent as handoff';}
  throw new Error('Invalid destination.');}
 function confirm_(r,u){need_(Array.isArray(r.decisions)&&r.decisions.length<=60,'Invalid decisions.');
@@ -344,9 +360,15 @@ function confirm_(r,u){need_(Array.isArray(r.decisions)&&r.decisions.length<=60,
      else x.needs_youssef=next.needs_youssef;}
    if(dec.decision==='reject'){x.status='rejected';x.result='Not saved: rejected';saveCap_(s,true);return done();}
    if(dec.decision==='keep'){x.status='kept';x.result='Kept in Inbox';saveCap_(s,true);return done();}
-   if(x.needs_youssef&&!u.admin){x.status='waiting';x.result='Waits for Youssef';saveCap_(s,true);return done();}
+   if(x.needs_youssef&&!u.admin){x.status='waiting';x.result='Waits for Youssef';saveCap_(s,true);
+     emit_([{by:u.name,kind:'capture',vis:[c.owner],cid:c.id,text:u.name+' sent to Youssef: '+x.summary}]);return done();}
    x.status='writing';x.approved_by=u.name;saveCap_(s,true);
-   try{x.result=append_(c,x);x.status='saved';}catch(err){x.status='uncertain';x.result='Not saved: '+String(err.message)+' Check Drive before a manual write.';}
+   try{x.result=append_(c,x);x.status='saved';
+     const t=x.result==='Saved to Board Tasks'?{vis:'all',title:x.fields.title,text:u.name+' added to the Board: '+x.fields.title+(x.fields.owner?' ('+x.fields.owner+')':'')}
+       :x.result==='Saved to Suppliers and Contacts'?{vis:'all',text:u.name+' added a supplier: '+x.fields.name}
+       :x.result==='Sent as handoff'?{vis:[c.owner],text:u.name+' sent to ChatGPT (handoff): '+x.summary}:null;
+     if(t)emit_([Object.assign({by:u.name,kind:'board',cid:c.id},t)]);}
+   catch(err){x.status='uncertain';x.result='Not saved: '+String(err.message)+' Check Drive before a manual write.';}
    saveCap_(s,true);done();});}
   catch(e){idxPut_(c);throw e;} // a stop half way: the index still gets the items saved before it
   // Inbox line becomes final only when every item has a final, known outcome.
@@ -381,7 +403,8 @@ function jam_(r,u){const op=String(r.op||'');need_(['add','remove','discussed','
     if(op==='add'){need_(own,'Access denied.');x.jam={state:'open',by:u.name,at:now_()};}
     else if(op==='remove'){need_(own,'Access denied.');delete x.jam;}
     else{need_(x.jam,'This idea is not on the jam list.');x.jam=Object.assign({},x.jam,{state:op},op==='discussed'?{discussed_by:u.name,discussed_at:now_()}:{});}
-    saveCap_(s);});
+    saveCap_(s);
+    emit_([{by:u.name,kind:'idea',vis:'all',text:u.name+({add:' put an idea on the jam list: ',remove:' took an idea off the jam list: ',discussed:' marked a jam idea discussed: ',open:' put an idea back on the jam list: '}[op])+x.summary}]);});
   return ideas_(u);}
 
 /* ---------- 4c. weekly report: moved / blocked / needs decision ---------- */
@@ -414,6 +437,7 @@ function reportSend_(r,u){const t={moved:short_(String(r.moved||'').trim(),1500)
     if(!x){x={week:week,owner:u.name,sent:now_()};reps.push(x);}Object.assign(x,t,{updated:now_()});
     jwrite_('_reports.json',reps.slice(-300));
     try{reportDoc_(x,again);}catch(e){console.error('report doc: '+e);}
+    emit_([{by:u.name,kind:'report',vis:[u.name],text:u.name+(again?' updated':' sent')+' the weekly report (week of '+week+')'}]);
     return x;});
   return {report:rep,state:reportState_(u)};}
 function reportDoc_(x,again){const id=props_().getProperty('REPORTS_DOC_ID');if(!id){console.warn('No REPORTS_DOC_ID. Run setupV3.');return;}
@@ -515,9 +539,17 @@ function applyPlan_(p,u,via){
     const e={at:now_(),title:p.set.title||p.task.title,owner:p.set.owner||p.task.owner,op:p.op,by:u.name,lines:p.lines};
     if(p.set.status){e.from=p.task.status;e.to=p.set.status;}
     if(via)e.via=via;L.push(e);jwrite_('_board_log.json',L.slice(-500));}
-  catch(e){console.error('board log: '+e);}}
+  catch(e){console.error('board log: '+e);}
+  snapPatch_(p.task.title,{title:p.set.title||p.task.title,status:p.set.status||p.task.status,owner:p.set.owner||p.task.owner,due:p.set.due!=null?p.set.due:iso_(p.task.due)});
+  const who=via?u.name+' (approved '+via.replace('request from ','')+"'s change)":u.name,title=p.task.title;
+  const parts=[];['title','owner','due','product','function'].forEach(k=>{if(p.set[k]!=null)parts.push((FIELD_LABEL[k]||k).toLowerCase()+' → '+(p.set[k]||'(empty)'));});
+  if(p.op==='edit'&&p.set.notes!=null)parts.push('notes');
+  const text=p.op==='drop'?who+' dropped "'+title+'"'
+    :p.op==='status'?who+' marked "'+title+'" '+p.set.status
+    :who+' changed "'+title+'": '+parts.join(', ');
+  emit_([{by:u.name,kind:'board',vis:'all',title:p.set.title||title,text:text}]);}
 function requests_(){try{return jread_('_task_requests.json',[]);}catch(e){console.error('requests: '+e);return [];}}
-function boardFor_(u){const b=board_();
+function boardFor_(u){const b=board_();try{lock_(()=>boardDiff_(b));}catch(e){console.error('board diff: '+e);}
   b.requests=requests_().filter(q=>q.state==='open'&&(u.admin||q.by===u.name)).map(q=>({id:q.id,by:q.by,at:q.at,title:q.req.title,row:q.req.row,op:q.req.op,lines:q.lines}));
   return b;}
 // r.dry = true: return the preview only. Otherwise write (or file a request for Youssef).
@@ -527,7 +559,9 @@ function taskChange_(r,u){
     if(!p.direct){const reqs=requests_();
       reqs.push({id:Utilities.getUuid(),at:now_(),by:u.name,state:'open',lines:p.lines,
         req:{row:p.row,title:p.task.title,op:p.op,status:String(r.status||''),reason:String(r.reason||''),changes:r.changes||null}});
-      jwrite_('_task_requests.json',reqs.slice(-300));return {requested:true};}
+      jwrite_('_task_requests.json',reqs.slice(-300));
+      emit_([{by:u.name,kind:'request',vis:[u.name],title:p.task.title,text:u.name+' asked to change "'+p.task.title+'": '+p.lines.join('; ')}]);
+      return {requested:true};}
     applyPlan_(p,u);return {requested:false};});
   return Object.assign(out,{board:boardFor_(u)});}
 // Youssef approves or rejects a request from Ahmad. Approve = the same change, planned again on the live Board.
@@ -535,6 +569,37 @@ function taskRequest_(r,u){need_(u.admin,'Only Youssef can approve changes.');co
   need_(['approve','reject'].includes(dec),'Invalid decision.');
   lock_(()=>{const reqs=requests_(),q=reqs.find(x=>x.id===id);need_(q&&q.state==='open','This request is closed. Refresh.');
     if(dec==='approve'){const p=planTask_(q.req,{name:q.by+', approved by '+u.name,admin:true});applyPlan_(p,u,'request from '+q.by);}
+    if(dec==='reject')emit_([{by:u.name,kind:'request',vis:[q.by],title:q.req.title,text:u.name+' rejected '+q.by+"'s change to \""+q.req.title+'"'}]);
     Object.assign(q,{state:dec==='approve'?'approved':'rejected',decided_by:u.name,decided_at:now_()});
     jwrite_('_task_requests.json',reqs.slice(-300));});
   return {board:boardFor_(u)};}
+
+/* ---------- 6. Recent changes (activity) ---------- */
+// One list in _activity.json (last 1000). vis = 'all' or a list of names. Youssef sees everything; Ahmad sees
+// Board events, jam-list ideas and his own items (never Youssef's private captures). Write only inside lock_.
+const A_WORD={task:'a task',supplier_contact:'a supplier',issue:'an issue',purchase:'a purchase',price:'a price',idea:'an idea',note:'a note',decision_candidate:'a decision'};
+function aWord_(k){return A_WORD[k]||'an item';}
+function emit_(evs){if(!evs||!evs.length)return;
+  try{let L=[];try{L=jread_('_activity.json',[]);}catch(e){console.error('activity was not valid. Starting again.');}
+    const at=now_();evs.forEach(e=>L.push(Object.assign({at:at},e,{text:String(e.text||'').slice(0,300)})));
+    jwrite_('_activity.json',L.slice(-1000));}
+  catch(e){console.error('activity: '+e);}}
+function activity_(u){let L=[];try{L=jread_('_activity.json',[]);}catch(e){}
+  const since=new Date(Date.now()-14*86400000).toISOString();
+  return {events:L.filter(e=>e.at>since&&(u.admin||e.vis==='all'||(Array.isArray(e.vis)&&e.vis.includes(u.name)))).slice(-300).reverse()};}
+// Board snapshot (title -> status/owner/due) to notice changes made outside the app.
+function snapOf_(tasks){const m={};tasks.forEach(t=>{m[norm_(t.title)]={t:t.title,s:t.status,o:t.owner,d:iso_(t.due)};});return m;}
+function snapPatch_(oldTitle,t){try{const S=jread_('_board_snap.json',null);if(!S)return;
+    if(oldTitle)delete S[norm_(oldTitle)];if(t)S[norm_(t.title)]={t:t.title,s:t.status||'',o:t.owner||'',d:iso_(t.due)};
+    jwrite_('_board_snap.json',S);}catch(e){console.error('snapshot: '+e);}}
+function boardDiff_(b){let old=null;try{old=jread_('_board_snap.json',null);}catch(e){}
+  const cur=snapOf_(b.tasks);
+  if(old){const ev=[],E=(title,text)=>ev.push({by:'Sheet',kind:'sheet',vis:'all',title:title,text:text});
+    Object.keys(cur).forEach(k=>{const n=cur[k],o=old[k];
+      if(!o)return E(n.t,'Task added in the sheet: '+n.t+(n.o?' ('+n.o+')':''));
+      if(o.s!==n.s)E(n.t,'"'+n.t+'" '+(o.s||'(empty)')+' → '+(n.s||'(empty)')+' (in the sheet)');
+      if(o.o!==n.o)E(n.t,'"'+n.t+'" owner '+(o.o||'(empty)')+' → '+(n.o||'(empty)')+' (in the sheet)');
+      if(o.d!==n.d)E(n.t,'"'+n.t+'" due '+(o.d||'(empty)')+' → '+(n.d||'(empty)')+' (in the sheet)');});
+    Object.keys(old).forEach(k=>{if(!cur[k])E(old[k].t,'Task renamed or removed in the sheet: '+old[k].t);});
+    emit_(ev.length>25?[{by:'Sheet',kind:'sheet',vis:'all',text:ev.length+' changes in the Board sheet (for example by a stand-up)'}]:ev);}
+  if(!old||JSON.stringify(old)!==JSON.stringify(cur))jwrite_('_board_snap.json',cur);}

@@ -2,7 +2,7 @@
 
 Phone web app for the two KRUDE co-founders: Youssef (Co-founder · Product, admin) and Ahmad (Co-founder · Market).
 Four tabs: **Capture** (voice/text/photo in), **History** (every captured item, search + filters), **Ideas** (my ideas + the shared jam list), **Board** (live read of KRUDE Board v2 › Tasks; change status, edit or drop a task, always with a preview first).
-Tap your name (top right) for the **weekly report** and, for Youssef, the **OpenAI cost** per month.
+Tap your name (top right) for the **weekly report** and, for Youssef, the **OpenAI cost** per month. The **bell** shows **Recent changes** (Today / This week).
 
 Always write the brand as **KRUDE** in files and UI. Never "Crude".
 Write replies to Youssef in ASD-STE100 Simplified Technical English. Keep them short.
@@ -22,7 +22,7 @@ CLAUDE.md               this file
 
 - `index.html` POSTs JSON (`Content-Type: text/plain`, no preflight) to the Apps Script `/exec` URL in `const API_URL` (about line 180). Never change that URL unless Youssef gives a new one.
 - Auth: a private link key (`#k=...`). The backend compares SHA-256 hashes in Script Properties `KEY_YOUSSEF_HASH`, `KEY_AHMAD_HASH`. New key: run `newKeyForYoussef` / `newKeyForAhmad` in the Apps Script editor.
-- Actions: `identity`, `upload`, `review`, `confirm`, `list`, `board`, `set_status`, `ideas`, `jam`, `report_draft`, `report_send`, `reports`, `costs`, `task_change` (status / edit / drop; `dry:true` = preview only), `task_request` (Youssef approves or rejects Ahmad's requests). `set_status` stays for old phones.
+- Actions: `identity`, `upload`, `review`, `confirm`, `list`, `board`, `set_status`, `ideas`, `jam`, `report_draft`, `report_send`, `reports`, `costs`, `task_change` (status / edit / drop; `dry:true` = preview only), `task_request` (Youssef approves or rejects Ahmad's requests), `activity` (Recent changes). `set_status` stays for old phones.
 - **Save** = `upload` only (fast). A 5-minute trigger `processPending` transcribes, writes the line in "18 - Capture Inbox", and sorts.
   **Save & Review** = `upload`, then `review` at once, then the user approves / keeps / rejects each item (`confirm`).
 - One JSON state file per capture: `cap_<Owner>_<id>.json` in `KRUDE Capture Drop/_Capture State`. Media in a folder per capture in `KRUDE Capture Drop`.
@@ -36,6 +36,12 @@ CLAUDE.md               this file
 - Review (v3.3): no default choice; untouched items stay "To review". Each card has "Goes to" (Board task / Supplier / Stays in Inbox). Items that only stayed in the Inbox (kept, or approved as "Kept in Inbox") can be reviewed again from History ("Review again").
 - Sorter (v3.3): anything someone must do = task / board_task, even without owner or date. "Needs Youssef" is decided by the app (`sensitive_`: kinds, destinations, sensitive_topics, money words in field VALUES), never by the sorter's own flag.
 - Board view (v3.3): Overdue → Today → This week (to Saturday) → Next week → Later → No due date; filters: owner, status (Open / To do / In progress / Blocked), group by date / product / function, search. Choices are kept in localStorage.
+- Recent changes (v3.4): `_activity.json` (last 1000 events, `emit_` inside the lock). Events: sorted items ("captured a task"), approvals ("added to the Board"), task changes, requests, jam list, weekly report, and changes made in the sheet (by hand or ChatGPT) found by comparing the Board with `_board_snap.json` on each Board read (`boardDiff_`; app writes patch the snapshot so they are not reported twice). Visibility: `vis` = 'all' or a list of names; Youssef sees all; Ahmad never sees Youssef's private captures. The phone shows a bell with a badge (changes by others since last opened).
+- Review queue (v3.4): History shows "N items to review · Review all" = one screen with every item that waits for me, from all captures. Doc 18 is a log for app captures (they are sorted in the app, not on Sunday in the doc).
+- Similar task (v3.4): in review, a Board task that shares key words with an open Board task shows "Similar task on the Board" and a "Same task: do not add" button (= Reject).
+- Sorting order (v3.4): sort first, then write the Inbox line (faster). A failed Inbox line is retried by the 5-minute job (`inbox` flag in the index).
+- Handoffs (v3.4): one open doc per day, "Handoff - YYYY-MM-DD - KRUDE Capture items", in the KRUDE Operations root (ChatGPT renames it DONE and moves it to Handoffs).
+- Sorter context (v3.4): also gets the product names from Board › Pipeline. KRUDE facts and examples live in "19 - Capture Rules" (edited through ChatGPT handoffs).
 - Phone safety: recordings are written to IndexedDB every second; the outbox keeps a capture until the server confirms it. Do not weaken this.
 
 ## Secrets (never in code, never in git)

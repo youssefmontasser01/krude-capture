@@ -91,6 +91,8 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .task.done .t{color:var(--mute);text-decoration:line-through}
 .detail p{margin:6px 0;unicode-bidi:plaintext}
 .detail a{color:var(--ink)}
+.bell{position:relative;background:none;border:none;padding:2px;color:var(--ink);cursor:pointer;line-height:0}
+.bell .n{position:absolute;top:-6px;right:-10px;min-width:18px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;line-height:18px}
 .whoBtn{background:none;border:none;font:inherit;font-size:13px;color:var(--mute);padding:4px 0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
 .rep{border-top:1px solid var(--line);padding:10px 0;font-size:14px}
 .rep p{margin:3px 0;unicode-bidi:plaintext}
@@ -100,7 +102,9 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 </head>
 <body>
 <div class="wrap">
-  <header><div class="brand">KRUDE</div><button class="whoBtn" id="who" aria-label="Reports and costs"></button></header>
+  <header><div class="brand">KRUDE</div><div style="display:flex;gap:16px;align-items:center">
+    <button class="bell" id="bell" aria-label="Recent changes"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg><span class="n hide" id="aBadge"></span></button>
+    <button class="whoBtn" id="who" aria-label="Reports and costs"></button></div></header>
   <div id="banners"></div>
   <div id="rBanner"></div>
 
@@ -303,7 +307,7 @@ async function updateStrip(){const all=await DB.all('outbox');const n=all.filter
   const b=$('sendNow');if(b)b.onclick=()=>{flush().then(()=>toast('Done.'))};}
 addEventListener('online',()=>{updateStrip();flush();});addEventListener('offline',updateStrip);document.addEventListener('visibilitychange',()=>{if(document.hidden||!ME)return;flush();
   // Fresh data each time the app comes back (Board changes made in the sheet or by the other founder).
-  if(CUR==='board')loadBoard();else if(CUR==='items')loadList();else if(CUR==='ideas')loadIdeas();});setInterval(flush,60000);
+  loadActivity();if(CUR==='board')loadBoard();else if(CUR==='items')loadList();else if(CUR==='ideas')loadIdeas();});setInterval(flush,60000);
 
 /* ---------- review ---------- */
 let progressT=null;
@@ -328,15 +332,47 @@ const FINAL=['saved','rejected','uncertain'];
 const reKeep=x=>x.status==='kept'||(x.status==='saved'&&x.result==='Kept in Inbox');
 const isFinal=x=>FINAL.includes(x.status)&&!reKeep(x);
 let reviewing=null;
-function openReview(c){reviewing={c,choice:{}};
-  const open=c.items.filter(x=>!isFinal(x)&&!(x.status==='waiting'&&!ME.admin));
-  const words=((c.text||'')+' '+(c.transcript||'')).trim();
-  openSheet(`<h2>Review ${c.items.length} item${c.items.length===1?'':'s'}</h2><div class="sub">${esc(words.slice(0,240))}</div>
-   ${c.items.map(x=>propHTML(x)).join('')}
-   <div class="btns"><button class="btn ghost" id="rClose">Later</button><button class="btn" id="rApply" ${open.length?'':'disabled'}>Apply</button></div>`);
-  $('sheetIn').querySelectorAll('.dsel').forEach(sel=>sel.onchange=()=>$('sheetIn').querySelectorAll(`.dst[data-id="${sel.dataset.id}"]`).forEach(b=>b.hidden=b.dataset.dst!==sel.value));
-  $('sheetIn').querySelectorAll('.seg').forEach(seg=>seg.onclick=e=>{const v=e.target.dataset.v;if(!v)return;reviewing.choice[seg.dataset.id]=v;seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));});
-  $('rClose').onclick=closeSheet;$('rApply').onclick=applyReview;}
+// Review. One capture (from History) or the whole "To review" queue (all captures that wait for me).
+function openReview(arg){const multi=Array.isArray(arg),caps=(multi?arg:[arg]).filter(Boolean);
+  const show=c=>c.items.filter(x=>!multi||x.status==='proposed'||(x.status==='waiting'&&ME.admin));
+  const n=caps.reduce((a,c)=>a+show(c).length,0),open=caps.some(c=>show(c).some(x=>!isFinal(x)&&!(x.status==='waiting'&&!ME.admin)));
+  reviewing={caps,choice:{}};
+  openSheet(`<h2>${multi?'To review':'Review'} · ${n} item${n===1?'':'s'}</h2>
+   ${caps.map(c=>{const w=((c.text||'')+' '+(c.transcript||'')).trim();
+     return `<div class="sub" style="margin-top:12px">${multi?esc(c.owner)+' · '+fmtTime(c.created)+' · ':''}${esc(w.slice(0,240))}</div>`+show(c).map(propHTML).join('');}).join('')}
+   <div class="btns"><button class="btn ghost" id="rClose">Later</button><button class="btn" id="rApply" ${open?'':'disabled'}>Apply</button></div>`);
+  const pick=(id,v)=>{reviewing.choice[id]=v;const seg=$('sheetIn').querySelector(`.seg[data-id="${id}"]`);if(seg)seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));};
+  $('sheetIn').querySelectorAll('.dsel').forEach(sel=>sel.onchange=()=>{$('sheetIn').querySelectorAll(`.dst[data-id="${sel.dataset.id}"]`).forEach(b=>b.hidden=b.dataset.dst!==sel.value);fillSimilar();});
+  $('sheetIn').querySelectorAll('.seg').forEach(seg=>seg.onclick=e=>{const v=e.target.dataset.v;if(v)pick(seg.dataset.id,v);});
+  $('sheetIn').querySelectorAll('input[data-f="title"]').forEach(i=>i.onchange=fillSimilar);
+  $('sheetIn').onclick=e=>{const b=e.target.closest('[data-same]');if(b){pick(b.dataset.same,'reject');toast('Marked: already on the Board. It will not be added.');}};
+  $('rClose').onclick=closeSheet;$('rApply').onclick=applyReview;
+  if(BOARD)fillSimilar();else loadBoard().then(fillSimilar);}
+// "Similar task on the Board": open tasks that share at least 2 key words and half of the shorter title.
+const STOPW=new Set('the and for with from into this that are was its our your their next new get make set have has will then also some all any about after before'.split(' '));
+const toks=s=>new Set(String(s||'').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu,' ').split(/\s+/).filter(w=>w.length>2&&!STOPW.has(w)).map(w=>w.replace(/(ing|es|s)$/,'')));
+function similarTask(title){if(!BOARD)return null;const a=toks(title);if(a.size<2)return null;let best=null,bs=0;
+  BOARD.tasks.forEach(t=>{if(isDone(t))return;const b=toks(t.title);let k=0;a.forEach(w=>{if(b.has(w))k++;});const sc=k/Math.max(1,Math.min(a.size,b.size));
+    if(k>=2&&sc>=0.5&&sc>bs){bs=sc;best=t;}});return best;}
+function fillSimilar(){if(!$('sheetIn'))return;$('sheetIn').querySelectorAll('.sim').forEach(box=>{const id=box.dataset.id,inp=$('sheetIn').querySelector(`input[data-f="title"][data-id="${id}"]`);
+  const t=inp&&!box.closest('[hidden]')?similarTask(inp.value):null;
+  box.innerHTML=t?`<div class="banner" style="margin:8px 0 0">Similar task on the Board: <b dir="auto">${esc(t.title)}</b> (${esc(t.owner||'no owner')} · ${esc(t.status||'—')}${t.due?' · '+esc(t.due):''}).
+    <div class="row"><button class="btn small ghost" data-same="${esc(id)}">Same task: do not add</button></div></div>`:'';});}
+async function applyReview(){
+  if(!Object.keys(reviewing.choice).length)return toast('Tap Approve, Keep or Reject on an item first. Items you do not touch stay "To review".');
+  $('rApply').disabled=true;$('rApply').textContent='Saving…';
+  const byCap={};
+  Object.entries(reviewing.choice).forEach(([id,decision])=>{const c=reviewing.caps.find(c=>c.items.some(i=>i.id===id));if(!c)return;
+    const x=c.items.find(i=>i.id===id),edits={fields:{}};let changed=false;
+    $('sheetIn').querySelectorAll(`[data-id="${id}"][data-f]`).forEach(el=>{if(el.closest('[hidden]'))return;const k=el.dataset.f,v=el.value;
+      if(k==='summary'||k==='destination'){if(v!==x[k]){edits[k]=v;changed=true;}}else if(v!==(x.fields[k]||'')){edits.fields[k]=v;changed=true;}});
+    (byCap[c.id]=byCap[c.id]||[]).push(Object.assign({id,decision,revision:x.revision},changed&&decision!=='reject'?{edits}:{}));});
+  let bad=0;const fail=[];
+  for(const [cid,decisions] of Object.entries(byCap)){
+    try{const res=await call('confirm',{capture_id:cid,decisions},180000);upsert(res.capture);bad+=res.results.filter(r=>r.status==='uncertain').length;}
+    catch(e){fail.push(e.message);}}
+  closeSheet();renderList();
+  toast(fail.length?'Some items did not save: '+fail[0]:bad?'Some items were NOT saved. Open History.':'Done.');}
 function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'&&!ME.admin);
   const sel=(k,opts)=>`<select data-f="${k}" data-id="${x.id}"><option value="">—</option>${opts.map(o=>`<option ${f[k]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
   const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?sel('owner',['Youssef','Ahmad']):k==='function'?sel('function',FUNCTIONS):`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
@@ -344,7 +380,7 @@ function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'
   if(!done){const base=['board_task','supplier','inbox_only'],dsts=base.includes(x.destination)?base:base.concat([x.destination]);
     extra=`<div class="lbl">Goes to</div><select class="dsel" data-f="destination" data-id="${x.id}">${dsts.map(d=>`<option value="${d}" ${x.destination===d?'selected':''}>${esc(DEST[d]||d)}</option>`).join('')}</select>
     <div class="dst" data-dst="board_task" data-id="${x.id}" ${x.destination==='board_task'?'':'hidden'}><div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title||x.summary)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}${fld('product','Product')}${fld('function','Function')}</div>
-      <div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.</div></div>
+      <div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.</div><div class="sim" data-id="${x.id}"></div></div>
     <div class="dst" data-dst="supplier" data-id="${x.id}" ${x.destination==='supplier'?'':'hidden'}><div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div></div>`;}
   const approve=x.can_confirm?'Approve':'To Youssef';
   return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)}${done?' → '+esc(DEST[x.destination]||x.destination):''}${reKeep(x)&&!done?' · now kept in Inbox':''}</span>
@@ -353,18 +389,6 @@ function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'
    `<textarea data-f="summary" data-id="${x.id}" dir="auto">${esc(x.summary)}</textarea>${extra}
     ${x.reason?`<div class="why">${esc(x.reason)}</div>`:''}
     <div class="seg" data-id="${x.id}"><button data-v="confirm">${approve}</button><button data-v="keep">Keep in Inbox</button><button data-v="reject">Reject</button></div>`}</div>`;}
-async function applyReview(){const c=reviewing.c;
-  if(!Object.keys(reviewing.choice).length)return toast('Tap Approve, Keep or Reject on an item first. Items you do not touch stay "To review".');
-  $('rApply').disabled=true;$('rApply').textContent='Saving…';
-  const decisions=Object.entries(reviewing.choice).map(([id,decision])=>{const x=c.items.find(i=>i.id===id);const edits={fields:{}};let changed=false;
-    $('sheetIn').querySelectorAll(`[data-id="${id}"][data-f]`).forEach(el=>{if(el.closest('[hidden]'))return;const k=el.dataset.f,v=el.value;
-      if(k==='summary'||k==='destination'){if(v!==x[k]){edits[k]=v;changed=true;}}else if(v!==(x.fields[k]||'')){edits.fields[k]=v;changed=true;}});
-    return Object.assign({id,decision,revision:x.revision},changed&&decision!=='reject'?{edits}:{});});
-  try{const res=await call('confirm',{capture_id:c.id,decisions},180000);upsert(res.capture);
-    const bad=res.results.filter(r=>r.status==='uncertain');
-    closeSheet();toast(bad.length?'Some items were NOT saved. Open History.':'Done.');renderList();}
-  catch(e){$('rApply').disabled=false;$('rApply').textContent='Apply';toast(e.message);}}
-
 /* ---------- History: one row per item, search, filters ---------- */
 let CAPS=[],FILTER='All';
 try{CAPS=JSON.parse(LS.get('krude_caps')||'[]')}catch(e){CAPS=[]}
@@ -397,7 +421,8 @@ async function renderList(){if(!ME)return;
       rows.push(`<div class="hrow" data-cap="${c.id}" data-item="${x.id}"><div class="k">${esc(KIND[x.kind]||x.kind)}</div><div class="m">
         <div class="t">${esc(x.summary)}</div><div class="d">${fmtTime(c.created)}${who}</div></div>${statusPill(x)}</div>`);});});
   const review=CAPS.filter(needsMe);
-  $('list').innerHTML=(review.length?`<div class="banner">${review.length} capture${review.length>1?'s':''} to review. <div class="row"><button class="btn small" data-rev="${review[0].id}">Review now</button></div></div>`:'')+
+  const nRev=review.reduce((a,c)=>a+c.items.filter(x=>x.status==='proposed'||(x.status==='waiting'&&ME.admin)).length,0);
+  $('list').innerHTML=(review.length?`<div class="banner"><b>${nRev} item${nRev===1?'':'s'} to review</b> from ${review.length} capture${review.length>1?'s':''}. <div class="row"><button class="btn small" data-rev="all">Review all</button></div></div>`:'')+
     (rows.join('')||'<div class="empty">Nothing here.</div>');}
 function openDetail(cid,iid){const c=CAPS.find(x=>x.id===cid);if(!c)return;const x=c.items.find(i=>i.id===iid);
   const f=x?Object.entries(x.fields||{}).filter(([k,v])=>v&&k!=='notes'):[];
@@ -414,7 +439,7 @@ $('filters').onclick=e=>{const g=e.target.dataset.g;if(g){FILTER=g;renderList();
 $('q').oninput=()=>renderList();
 $('list').onclick=async e=>{const t=e.target.closest('[data-send],[data-rev],[data-cap]');if(!t)return;
   if(t.dataset.send){t.disabled=true;await send(t.dataset.send);renderList();}
-  else if(t.dataset.rev){openReview(CAPS.find(c=>c.id===t.dataset.rev));}
+  else if(t.dataset.rev){openReview(t.dataset.rev==='all'?CAPS.filter(needsMe):CAPS.find(c=>c.id===t.dataset.rev));}
   else if(t.dataset.cap){openDetail(t.dataset.cap,t.dataset.item);}};
 $('refresh').onclick=loadList;
 
@@ -595,6 +620,33 @@ async function openReport(){
       ME.report=res.state;LS.set('krude_me',JSON.stringify(ME));reportBanner();closeSheet();toast('Report sent.');}
     catch(e){b.disabled=false;b.textContent='Send';toast(e.message);}};}
 
+/* ---------- Recent changes (bell). Badge = changes by others since you last opened the list ---------- */
+let ACT=[],AWHEN=LS.get('krude_awhen')||'Today',AWHO='All';
+try{ACT=JSON.parse(LS.get('krude_act')||'[]')}catch(e){ACT=[]}
+const seenAt=()=>(ME&&LS.get('krude_seen_'+ME.name))||'';
+function actBadge(){if(!ME)return;const s=seenAt(),n=ACT.filter(e=>e.by!==ME.name&&e.at>s).length;$('aBadge').textContent=n>99?'99+':n;$('aBadge').classList.toggle('hide',!n);}
+async function loadActivity(){try{const r=await call('activity',{},30000);ACT=r.events||[];LS.set('krude_act',JSON.stringify(ACT.slice(0,300)));actBadge();}catch(e){}}
+function weekStart(){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-d.getDay());return d;} // KRUDE weeks start on Sunday
+function renderActivity(seen){if(!$('aList'))return;const t0=new Date();t0.setHours(0,0,0,0);const from=(AWHEN==='Today'?t0:weekStart()).toISOString();
+  const other=ME.name==='Youssef'?'Ahmad':'Youssef';
+  $('aWhen').innerHTML=['Today','This week'].map(w=>`<button class="chip ${AWHEN===w?'on':''}" data-w="${w}">${w}</button>`).join('');
+  $('aWho').innerHTML=[['All','All'],[other,other],[ME.name,'Me'],['Sheet','Board sheet']].map(([v,l])=>`<button class="chip ${AWHO===v?'on':''}" data-who="${v}">${l}</button>`).join('');
+  const list=ACT.filter(e=>e.at>=from&&(AWHO==='All'||e.by===AWHO));
+  $('aList').innerHTML=list.map(e=>`<div class="hrow" ${e.title?`data-at="${esc(e.title)}"`:''}><div class="k">${esc(e.by==='Sheet'?'Sheet':e.by===ME.name?'Me':e.by)}</div>
+    <div class="m"><div class="t" dir="auto">${esc(e.text)}</div><div class="d">${fmtTime(e.at)}${e.by!==ME.name&&e.at>seen?' · <b style="color:var(--red)">new</b>':''}</div></div></div>`).join('')
+    ||`<div class="empty">No changes ${AWHEN==='Today'?'today':'this week'}.</div>`;}
+async function openActivity(){if(!ME)return;const seen=seenAt();
+  openSheet(`<div class="detail"><h2>Recent changes</h2><div class="row" id="aWhen" style="margin:8px 0"></div><div class="row" id="aWho" style="margin-bottom:6px"></div>
+    <div id="aList"></div><div class="row" style="margin-top:14px"><button class="btn small ghost" id="aClose">Close</button></div></div>`);
+  $('aClose').onclick=closeSheet;
+  $('aWhen').onclick=e=>{const w=e.target.dataset.w;if(w){AWHEN=w;LS.set('krude_awhen',w);renderActivity(seen);}};
+  $('aWho').onclick=e=>{const w=e.target.dataset.who;if(w){AWHO=w;renderActivity(seen);}};
+  $('aList').onclick=e=>{const r=e.target.closest('[data-at]');if(!r||!BOARD)return;const t=BOARD.tasks.find(x=>x.title===r.dataset.at);if(t)openTask(t);};
+  renderActivity(seen);await loadActivity();renderActivity(seen);
+  if(ACT[0])LS.set('krude_seen_'+ME.name,ACT[0].at);actBadge();}
+$('bell').onclick=openActivity;
+setInterval(()=>{if(!document.hidden&&ME)loadActivity();},120000);
+
 /* ---------- shell ---------- */
 function openSheet(html){$('sheetIn').innerHTML=html;$('sheet').classList.add('on');}
 function closeSheet(){$('sheet').classList.remove('on');clearInterval(progressT);}
@@ -629,6 +681,7 @@ async function start(){
   $('who').textContent=ME.name;reportBanner();['vCap','nav'].forEach(i=>$(i).classList.remove('hide'));tab('cap');
   renderHints();renderThumbs();canSave();updateStrip();recover();flush();
   if(ME.admin)loadBoard(); // shows the badge when Ahmad's changes wait
+  actBadge();loadActivity();
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 }
 start();
