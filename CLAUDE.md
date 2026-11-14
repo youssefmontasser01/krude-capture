@@ -84,8 +84,8 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 
 ## Open items
 
-- Records: "Handoff - 2026-11-14 - Close of KRUDE Capture v3.6 session" (KRUDE Operations root) waits for ChatGPT. It fixes the Save rule wording, sets State to "v3.6 live" and closes the 13 Nov v3 handoff.
-- Records: D1/D3/Leadership decisions (14 Nov, v3.7) are not yet in the Decision Log; make a handoff.
+- Records: "Handoff - 2026-11-14 - KRUDE Capture v3.7: D1, D2, D3 and Leadership decided" (KRUDE Operations root) waits for ChatGPT. It adds the three decisions to the Decision Log and closes the two Kickoff questions in 00 - State. (The v3.6 close handoff is DONE.)
+- Backend v3.7: Youssef confirms "App v3.7 · Server v3.7" on the Me screen (Apps Script by hand, deployment "capture v3.6").
 - Ahmad's test feedback: not received yet.
 
 - Real iPhone test of recovery (close Safari mid-recording) and offline send.
