@@ -162,7 +162,9 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 
   <!-- BOARD -->
   <section id="vBoard" class="hide">
-    <div class="row" id="bFilters" style="margin-bottom:12px"></div>
+    <input id="bQ" type="search" dir="auto" placeholder="Search tasks" style="margin-bottom:10px">
+    <div class="row" id="bFilters" style="margin-bottom:8px"></div>
+    <div class="row" id="bFilters2" style="margin-bottom:12px"></div>
     <div id="bList"></div>
     <div style="text-align:center"><button class="link" id="bRefresh">Refresh</button></div>
   </section>
@@ -321,35 +323,42 @@ async function runReview(id,fromSave){
 }
 const DEST={board_task:'Board task',supplier:'Supplier',inventory_change:'Inventory (handoff)',decision_log_candidate:'Decision (handoff)',fill_backlog:'Fill Backlog (handoff)',handbook_note:'Handbook (handoff)',inbox_only:'Stays in Inbox'};
 const KIND={task:'Task',supplier_contact:'Supplier',issue:'Issue',purchase:'Purchase',price:'Price',idea:'Idea',note:'Note',decision_candidate:'Decision'};
-const FINAL=['saved','kept','rejected','uncertain'];
+const FINAL=['saved','rejected','uncertain'];
+// Items that only stayed in the Inbox can be reviewed again (for example to send them to the Board).
+const reKeep=x=>x.status==='kept'||(x.status==='saved'&&x.result==='Kept in Inbox');
+const isFinal=x=>FINAL.includes(x.status)&&!reKeep(x);
 let reviewing=null;
 function openReview(c){reviewing={c,choice:{}};
-  const open=c.items.filter(x=>!FINAL.includes(x.status)&&!(x.status==='waiting'&&!ME.admin));
+  const open=c.items.filter(x=>!isFinal(x)&&!(x.status==='waiting'&&!ME.admin));
   const words=((c.text||'')+' '+(c.transcript||'')).trim();
   openSheet(`<h2>Review ${c.items.length} item${c.items.length===1?'':'s'}</h2><div class="sub">${esc(words.slice(0,240))}</div>
    ${c.items.map(x=>propHTML(x)).join('')}
    <div class="btns"><button class="btn ghost" id="rClose">Later</button><button class="btn" id="rApply" ${open.length?'':'disabled'}>Apply</button></div>`);
-  open.forEach(x=>reviewing.choice[x.id]='keep');
+  $('sheetIn').querySelectorAll('.dsel').forEach(sel=>sel.onchange=()=>$('sheetIn').querySelectorAll(`.dst[data-id="${sel.dataset.id}"]`).forEach(b=>b.hidden=b.dataset.dst!==sel.value));
   $('sheetIn').querySelectorAll('.seg').forEach(seg=>seg.onclick=e=>{const v=e.target.dataset.v;if(!v)return;reviewing.choice[seg.dataset.id]=v;seg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));});
   $('rClose').onclick=closeSheet;$('rApply').onclick=applyReview;}
-function propHTML(x){const f=x.fields||{},done=FINAL.includes(x.status)||(x.status==='waiting'&&!ME.admin);
+function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'&&!ME.admin);
   const sel=(k,opts)=>`<select data-f="${k}" data-id="${x.id}"><option value="">—</option>${opts.map(o=>`<option ${f[k]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
   const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?sel('owner',['Youssef','Ahmad']):k==='function'?sel('function',FUNCTIONS):`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
   let extra='';
-  if(!done&&x.destination==='board_task')extra=`<div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}${fld('product','Product')}${fld('function','Function')}</div>
-    ${!f.owner||!f.due_date?'<div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.</div>':''}`;
-  if(!done&&x.destination==='supplier')extra=`<div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div>`;
+  if(!done){const base=['board_task','supplier','inbox_only'],dsts=base.includes(x.destination)?base:base.concat([x.destination]);
+    extra=`<div class="lbl">Goes to</div><select class="dsel" data-f="destination" data-id="${x.id}">${dsts.map(d=>`<option value="${d}" ${x.destination===d?'selected':''}>${esc(DEST[d]||d)}</option>`).join('')}</select>
+    <div class="dst" data-dst="board_task" data-id="${x.id}" ${x.destination==='board_task'?'':'hidden'}><div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title||x.summary)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}${fld('product','Product')}${fld('function','Function')}</div>
+      <div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.</div></div>
+    <div class="dst" data-dst="supplier" data-id="${x.id}" ${x.destination==='supplier'?'':'hidden'}><div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div></div>`;}
   const approve=x.can_confirm?'Approve':'To Youssef';
-  return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)} → ${esc(DEST[x.destination]||x.destination)}</span>
+  return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)}${done?' → '+esc(DEST[x.destination]||x.destination):''}${reKeep(x)&&!done?' · now kept in Inbox':''}</span>
    ${x.needs_youssef?'<span class="pill wait">Needs Youssef</span>':''}</div>
    ${done?`<div dir="auto">${esc(x.summary)}</div><div style="margin-top:8px">${statusPill(x)}</div>`:
    `<textarea data-f="summary" data-id="${x.id}" dir="auto">${esc(x.summary)}</textarea>${extra}
     ${x.reason?`<div class="why">${esc(x.reason)}</div>`:''}
-    <div class="seg" data-id="${x.id}"><button data-v="confirm">${approve}</button><button data-v="keep" class="on">Keep in Inbox</button><button data-v="reject">Reject</button></div>`}</div>`;}
-async function applyReview(){const c=reviewing.c;$('rApply').disabled=true;$('rApply').textContent='Saving…';
+    <div class="seg" data-id="${x.id}"><button data-v="confirm">${approve}</button><button data-v="keep">Keep in Inbox</button><button data-v="reject">Reject</button></div>`}</div>`;}
+async function applyReview(){const c=reviewing.c;
+  if(!Object.keys(reviewing.choice).length)return toast('Tap Approve, Keep or Reject on an item first. Items you do not touch stay "To review".');
+  $('rApply').disabled=true;$('rApply').textContent='Saving…';
   const decisions=Object.entries(reviewing.choice).map(([id,decision])=>{const x=c.items.find(i=>i.id===id);const edits={fields:{}};let changed=false;
-    $('sheetIn').querySelectorAll(`[data-id="${id}"][data-f]`).forEach(el=>{const k=el.dataset.f,v=el.value;
-      if(k==='summary'){if(v!==x.summary){edits.summary=v;changed=true;}}else if(v!==(x.fields[k]||'')){edits.fields[k]=v;changed=true;}});
+    $('sheetIn').querySelectorAll(`[data-id="${id}"][data-f]`).forEach(el=>{if(el.closest('[hidden]'))return;const k=el.dataset.f,v=el.value;
+      if(k==='summary'||k==='destination'){if(v!==x[k]){edits[k]=v;changed=true;}}else if(v!==(x.fields[k]||'')){edits.fields[k]=v;changed=true;}});
     return Object.assign({id,decision,revision:x.revision},changed&&decision!=='reject'?{edits}:{});});
   try{const res=await call('confirm',{capture_id:c.id,decisions},180000);upsert(res.capture);
     const bad=res.results.filter(r=>r.status==='uncertain');
@@ -397,7 +406,7 @@ function openDetail(cid,iid){const c=CAPS.find(x=>x.id===cid);if(!c)return;const
     ${ME.admin&&c.cost!=null?`<p class="who">OpenAI cost (estimate): $${(+c.cost).toFixed(4)}</p>`:''}
     <div class="lbl">What was said</div><p dir="auto">${esc(words(c)||'—')}</p>
     ${c.photos.length?`<div class="lbl">Photos</div>${c.photos.map((u,i)=>`<p><a href="${esc(u)}" target="_blank">Photo ${i+1}</a></p>`).join('')}`:''}
-    <div class="row" style="margin-top:14px">${needsMe(c)?`<button class="btn small" id="dRev">Review</button>`:''}
+    <div class="row" style="margin-top:14px">${needsMe(c)?`<button class="btn small" id="dRev">Review</button>`:c.items.some(reKeep)&&(ME.admin||c.owner===ME.name)?`<button class="btn small ghost" id="dRev">Review again</button>`:''}
     ${!c.items.length&&(ME.admin||c.owner===ME.name)?`<button class="btn small ghost" id="dSort">${c.error?'Retry':'Sort now'}</button>`:''}
     <button class="btn small ghost" id="dClose">Close</button></div></div>`);
   $('dClose').onclick=closeSheet;if($('dRev'))$('dRev').onclick=()=>openReview(c);if($('dSort'))$('dSort').onclick=()=>runReview(c.id,false);}
@@ -417,23 +426,41 @@ async function loadBoard(){try{BOARD=await call('board',{},60000);LS.set('krude_
 // Closed = done or dropped. Closed tasks are not open and not overdue.
 const isDone=t=>/^(done|complete|completed|finished|dropped|cancelled|canceled)$/i.test(t.status.trim());
 const dueKey=t=>/^\d{4}-\d{2}-\d{2}/.test(t.due)?t.due.slice(0,10):(t.due&&!isNaN(Date.parse(t.due))?new Date(t.due).toISOString().slice(0,10):'9999');
+// Board view: Overdue → Today → This week → Next week → Later → No date (KRUDE weeks run Sunday to Saturday).
+// Filters: owner (Me / other / All), status, group by Date / Product / Function, search. Choices are remembered on the phone.
+let BSTAT=LS.get('krude_bstat')||'Open',BGROUP=LS.get('krude_bgroup')||'Date';
 function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
   $('bFilters').innerHTML=[ME.name,ME.name==='Youssef'?'Ahmad':'Youssef','All'].map(g=>`<button class="chip ${BFILTER===g?'on':''}" data-b="${g}">${g==='All'?'All':g===ME.name?'Me':g}</button>`).join('');
+  $('bFilters2').innerHTML=['Open','To do','In progress','Blocked'].map(s=>`<button class="chip ${BSTAT===s?'on':''}" data-st="${s}">${s}</button>`).join('')+
+    '<span style="flex-basis:100%;height:0"></span>'+['Date','Product','Function'].map(g=>`<button class="chip ${BGROUP===g?'on':''}" data-g="${g}">By ${g.toLowerCase()}</button>`).join('');
   if(!BOARD){$('bList').innerHTML='<div class="empty">Loading…</div>';return;}
   const reqs=BOARD.requests||[];$('bBadge').textContent=reqs.length;$('bBadge').classList.toggle('hide',!(ME.admin&&reqs.length));
   const reqHTML=reqs.length?`<div class="sec" style="margin-top:0">${ME.admin?'Changes from Ahmad':'Waiting for Youssef'} · ${reqs.length}</div>`+
     reqs.map(q=>`<div class="hrow" data-req="${esc(q.id)}"><div class="m"><div class="t">${esc(q.title)}</div><div class="d">${esc(q.lines[0]||'')}${q.lines.length>1?' (+'+(q.lines.length-1)+')':''}</div></div><span class="pill wait">${ME.admin?'Review':'Waiting'}</span></div>`).join(''):'';
-  const today=BOARD.today,mine=t=>BFILTER==='All'||t.owner.toLowerCase().includes(BFILTER.toLowerCase());
-  const open=BOARD.tasks.filter(t=>mine(t)&&!isDone(t)).sort((a,b)=>dueKey(a).localeCompare(dueKey(b)));
-  const done=BOARD.tasks.filter(t=>mine(t)&&isDone(t));
+  const today=BOARD.today,q=($('bQ').value||'').trim().toLowerCase();
+  const mine=t=>BFILTER==='All'||t.owner.toLowerCase().includes(BFILTER.toLowerCase());
+  const hit=t=>!q||[t.title,t.notes,t.product,t.function,t.owner].join(' ').toLowerCase().includes(q);
+  const stat=t=>BSTAT==='Open'||t.status.trim().toLowerCase()===BSTAT.toLowerCase();
+  const byDue=(a,b)=>dueKey(a).localeCompare(dueKey(b))||a.row-b.row;
+  const open=BOARD.tasks.filter(t=>mine(t)&&hit(t)&&!isDone(t)&&stat(t)).sort(byDue);
+  const done=BOARD.tasks.filter(t=>mine(t)&&hit(t)&&isDone(t));
   const row=t=>{const over=!isDone(t)&&dueKey(t)<today;const st=/block/i.test(t.status)?'bad':/progress/i.test(t.status)?'wait':/^dropped$/i.test(t.status.trim())?'':isDone(t)?'ok':'';
+    const bits=[t.owner||'No owner',t.due?(over?'Overdue · ':'')+t.due:'',BGROUP!=='Product'?t.product:'',BGROUP!=='Function'?t.function:''].filter(Boolean);
     return `<div class="hrow task ${over?'over':''} ${isDone(t)?'done':''}" data-row="${t.row}"><div class="m"><div class="t">${esc(t.title)}</div>
-    <div class="d">${esc(t.owner||'No owner')}${t.due?' · '+(over?'Overdue · ':'')+esc(t.due):''}${t.function?' · '+esc(t.function):''}</div></div><span class="pill ${st}">${esc(t.status||'—')}</span></div>`;};
-  const over=open.filter(t=>dueKey(t)<today);const rest=open.filter(t=>dueKey(t)>=today);
-  $('bList').innerHTML=reqHTML+(over.length?`<div class="sec">Overdue · ${over.length}</div>`+over.map(row).join(''):'')+
-    `<div class="sec">Open · ${rest.length}</div>`+(rest.map(row).join('')||'<div class="empty">No open tasks.</div>')+
-    (done.length?`<div class="sec"><button class="link" id="bDone">Done or dropped · ${done.length} (show)</button></div><div id="bDoneList" class="hide">${done.map(row).join('')}</div>`:'');
+    <div class="d">${bits.map(esc).join(' · ')}</div></div><span class="pill ${st}">${esc(t.status||'—')}</span></div>`;};
+  const sec=(name,list,always,empty)=>list.length||always?`<div class="sec">${esc(name)} · ${list.length}</div>`+(list.map(row).join('')||`<div class="empty" style="padding:12px 0">${empty||'Nothing here.'}</div>`):'';
+  let body='';
+  if(BGROUP==='Date'){const d0=new Date(today+'T00:00:00Z'),dow=d0.getUTCDay(),add=n=>{const d=new Date(d0);d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
+    const sat=add(6-dow),sat2=add(13-dow),B={Overdue:[],Today:[],'This week':[],'Next week':[],Later:[],'No due date':[]};
+    open.forEach(t=>{const k=dueKey(t);B[k==='9999'?'No due date':k<today?'Overdue':k===today?'Today':k<=sat?'This week':k<=sat2?'Next week':'Later'].push(t);});
+    body=sec('Overdue',B.Overdue)+sec('Today',B.Today,true,'Nothing due today.')+sec('This week (to Saturday)',B['This week'])+sec('Next week',B['Next week'])+sec('Later',B.Later)+sec('No due date',B['No due date']);}
+  else{const key=BGROUP==='Product'?'product':'function',G={};open.forEach(t=>{const k=t[key].trim()||'zzz';(G[k]=G[k]||[]).push(t);});
+    body=Object.keys(G).sort().map(k=>sec(k==='zzz'?'No '+key:k,G[k])).join('');}
+  $('bList').innerHTML=reqHTML+(body||'<div class="empty">No open tasks for this filter.</div>')+
+    (done.length?`<div class="sec"><button class="link" id="bDone">Done or dropped · ${done.length} (show)</button></div><div id="bDoneList" class="hide">${done.sort((a,b)=>b.row-a.row).map(row).join('')}</div>`:'');
   if($('bDone'))$('bDone').onclick=()=>$('bDoneList').classList.toggle('hide');}
+$('bFilters2').onclick=e=>{const s=e.target.dataset.st,g=e.target.dataset.g;if(s){BSTAT=s;LS.set('krude_bstat',s);}if(g){BGROUP=g;LS.set('krude_bgroup',g);}if(s||g)renderBoard();};
+$('bQ').oninput=()=>renderBoard();
 $('bFilters').onclick=e=>{const g=e.target.dataset.b;if(g){BFILTER=g;renderBoard();}};
 /* ---------- Task screen: status, edit, drop. Every change shows a preview first (same rule as Crude Today) ---------- */
 const owns=t=>ME.admin||String(t.owner||'').toLowerCase().split(/[^a-z]+/).includes(ME.name.toLowerCase());
