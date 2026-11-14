@@ -198,7 +198,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 const API_URL = 'https://script.google.com/macros/s/AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA/exec';
 /* ======================================================================================== */
 
-const APP_VERSION=3.6; // raise with every release; the server (Code.js VERSION) should match
+const APP_VERSION=3.7; // raise with every release; the server (Code.js VERSION) should match
 const $=id=>document.getElementById(id);
 let SERVER_V=0;
 const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
@@ -236,6 +236,8 @@ async function dropRec(id){await DB.delRange('chunks',id+':',id+':~');await DB.d
 const draft={recId:null,audio:null,mime:'',secs:0,photos:[],hint:''};
 const HINTS=['Note','Idea','Task','Issue'];
 const FUNCTIONS=['Design','Product Development','Production','Commercial','Fulfilment','Fulfilment - Website','Finance','Legal and Admin','Leadership','Capture'];
+// Leadership is Youssef's private work: Ahmad never gets it in a list (14 Nov, v3.7).
+const fns=()=>ME&&ME.admin?FUNCTIONS:FUNCTIONS.filter(f=>f!=='Leadership');
 function renderHints(){$('hints').innerHTML=HINTS.map(h=>`<button class="chip ${draft.hint===h?'on':''}" data-h="${h}">${h}</button>`).join('');}
 $('hints').onclick=e=>{const h=e.target.dataset.h;if(!h)return;draft.hint=draft.hint===h?'':h;renderHints();};
 $('txt').value=LS.get('krude_draft_text')||'';
@@ -387,7 +389,7 @@ async function applyReview(){
   toast(fail.length?'Some items did not save: '+fail[0]:bad?'Some items were NOT saved. Open History.':'Done.');}
 function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'&&!ME.admin);
   const sel=(k,opts)=>`<select data-f="${k}" data-id="${x.id}"><option value="">—</option>${opts.map(o=>`<option ${f[k]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
-  const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?sel('owner',['Youssef','Ahmad']):k==='function'?sel('function',FUNCTIONS):`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
+  const fld=(k,label,type)=>`<div><div class="lbl" style="margin-top:4px">${label}</div>${k==='owner'?sel('owner',['Youssef','Ahmad']):k==='function'?sel('function',fns()):`<input data-f="${k}" data-id="${x.id}" type="${type||'text'}" dir="auto" value="${esc(f[k])}">`}</div>`;
   let extra='';
   if(!done){const base=['board_task','supplier','inbox_only'],dsts=base.includes(x.destination)?base:base.concat([x.destination]);
     extra=`<div class="lbl">Goes to</div><select class="dsel" data-f="destination" data-id="${x.id}">${dsts.map(d=>`<option value="${d}" ${x.destination===d?'selected':''}>${esc(DEST[d]||d)}</option>`).join('')}</select>
@@ -524,13 +526,13 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
   $('tClose').onclick=closeSheet;
   $('sheetIn').querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{if(b.dataset.s===t.status)return;
     $('sheetIn').querySelectorAll('[data-s]').forEach(x=>x.classList.toggle('on',x===b));preview(t,{op:'status',status:b.dataset.s});});
-  $('tEditB').onclick=()=>{const fns=['',...FUNCTIONS];
+  $('tEditB').onclick=()=>{const fnl=['',...fns()];
     $('tWork').innerHTML=`<div class="lbl">Task</div><input id="eTitle" dir="auto" value="${esc(t.title)}">
       <div class="prop"><div class="grid">
         <div><div class="lbl" style="margin-top:4px">Owner</div><select id="eOwner">${['Youssef','Ahmad'].map(o=>`<option ${t.owner===o?'selected':''}>${o}</option>`).join('')}${['Youssef','Ahmad'].includes(t.owner)?'':`<option selected value="">${esc(t.owner||'—')}</option>`}</select></div>
         <div><div class="lbl" style="margin-top:4px">Due</div><input id="eDue" type="date" value="${esc(isoDue(t.due))}"></div>
         <div><div class="lbl" style="margin-top:4px">Product</div><input id="eProduct" dir="auto" value="${esc(t.product)}"></div>
-        <div><div class="lbl" style="margin-top:4px">Function</div><select id="eFunction">${fns.map(f=>`<option value="${esc(f)}" ${t.function===f?'selected':''}>${esc(f||'—')}</option>`).join('')}${fns.includes(t.function)?'':`<option selected value="${esc(t.function)}">${esc(t.function)}</option>`}</select></div>
+        <div><div class="lbl" style="margin-top:4px">Function</div><select id="eFunction">${fnl.map(f=>`<option value="${esc(f)}" ${t.function===f?'selected':''}>${esc(f||'—')}</option>`).join('')}${fns.includes(t.function)?'':`<option selected value="${esc(t.function)}">${esc(t.function)}</option>`}</select></div>
       </div></div>
       <div class="lbl">Notes</div><textarea id="eNotes" dir="auto">${esc(t.notes)}</textarea>
       <div style="margin-top:10px"><button class="btn" id="eGo">Preview changes</button></div>`;

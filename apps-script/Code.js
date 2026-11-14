@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.6;
+const VERSION=3.7;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -26,6 +26,9 @@ const KINDS=['task','supplier_contact','issue','purchase','price','idea','note',
 const FIELD_NAMES=['title','product','owner','due_date','function','name','phone','sells','price','place','notes'];
 // Board Function names (Decision Log / 00 - ChatGPT Project Instructions). Empty = not known.
 const FUNCTIONS=['Design','Product Development','Production','Commercial','Fulfilment','Fulfilment - Website','Finance','Legal and Admin','Leadership','Capture'];
+// Leadership is Youssef's private work (Strategy Board). Ahmad never sees it: not on the Board, not in a function list (Youssef, 14 Nov).
+const isLead_=f=>norm_(f)==='leadership';
+const fnsFor_=owner=>owner==='Youssef'?FUNCTIONS:FUNCTIONS.filter(f=>f!=='Leadership');
 const HINTS=['','Note','Idea','Task','Issue'];
 
 /* ---------- basics (same as v1) ---------- */
@@ -189,7 +192,7 @@ function work_(cid,u){
       c.transcript=t.text||'(no speech found)';c.status='transcribed';putCap_(c,u);}
     const sorted=sortItems_(c);pay(sorted.cost);
     const done=lock_(()=>{const s=loadCap_(c.id,u),first=!s.c.items;s.c.transcript=c.transcript;s.c.cost=c.cost;
-      if(first){s.c.items=sorted.items.map(x=>Object.assign(validateItem_(x,c.id),{id:Utilities.getUuid(),status:'proposed',revision:1}));
+      if(first){s.c.items=sorted.items.map(x=>Object.assign(validateItem_(x,c.id,c.owner),{id:Utilities.getUuid(),status:'proposed',revision:1}));
         emit_(s.c.items.map(x=>({by:s.c.owner,kind:'capture',vis:[s.c.owner],cid:s.c.id,text:s.c.owner+' captured '+aWord_(x.kind)+': '+x.summary})));}
       s.c.status='ready';s.c.error='';s.c.processing_until=null;saveCap_(s);ledger_(spent,first);return s.c;});
     // The Inbox line is written after sorting, so the founder sees the items sooner. If it fails, the 5-minute job tries again.
@@ -246,16 +249,17 @@ function table_(id,tab){const s=SpreadsheetApp.openById(id);const t=tab?s.getShe
   const n=t.getLastRow(),w=t.getLastColumn();need_(w>0,'Sheet needs a header row.');const header=t.getRange(1,1,1,w).getDisplayValues()[0];
   const start=Math.max(2,n-CFG.CONTEXT_ROWS+1);
   return {sheet:t,headers:header,rows:n>1?t.getRange(start,1,n-start+1,w).getDisplayValues():[],last_row:n};}
-function context_(){
+function context_(owner){
   // Small context = faster and cheaper: only the columns the sorter needs.
   const pick=(t,names)=>{const idx=t.headers.map((h,i)=>names.includes(norm_(h))?i:-1).filter(i=>i>=0);
     return {headers:idx.map(i=>t.headers[i]),rows:t.rows.map(r=>idx.map(i=>r[i]))};};
   const board=table_(CFG.BOARD_SHEET_ID,'Tasks'),sup=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
   let products=[];try{products=table_(CFG.BOARD_SHEET_ID,'Pipeline').rows.map(r=>r[0]).filter(Boolean);}catch(e){}
+  if(owner!=='Youssef'){const fc=board.headers.findIndex(h=>norm_(h)==='function');if(fc>=0)board.rows=board.rows.filter(r=>!isLead_(r[fc]));}
   return {board_tasks:pick(board,['task','task name','title','name','product','owner','status','function','due','due date','week']),
           suppliers:pick(sup,['name','sells','place']),products:products};
 }
-function schema_(){const fp={};FIELD_NAMES.forEach(k=>fp[k]={type:'string'});fp.function={type:'string',enum:FUNCTIONS.concat([''])};
+function schema_(owner){const fp={};FIELD_NAMES.forEach(k=>fp[k]={type:'string'});fp.function={type:'string',enum:fnsFor_(owner).concat([''])};
   const obj={entry_id:{type:'string'},kind:{type:'string',enum:KINDS},summary:{type:'string'},destination:{type:'string',enum:DESTS},
     fields:{type:'object',properties:fp,required:FIELD_NAMES,additionalProperties:false},needs_youssef:{type:'boolean'},reason:{type:'string'},
     operation:{type:'string',enum:['create','update']},existing_record:{type:'string'},
@@ -277,8 +281,8 @@ function sortItems_(c){
   const model=props_().getProperty('SORT_MODEL')||CFG.SORT_MODEL;
   const res=UrlFetchApp.fetch('https://api.openai.com/v1/responses',{method:'post',contentType:'application/json',headers:{Authorization:'Bearer '+apiKey_()},
     payload:JSON.stringify({model:model,store:false,instructions:instructions,
-      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({records:context_(),capture:capture})}]}],
-      text:{format:{type:'json_schema',name:'propose_items',strict:true,schema:schema_()}}}),muteHttpExceptions:true});
+      input:[{role:'user',content:[{type:'input_text',text:JSON.stringify({records:context_(c.owner),capture:capture})}]}],
+      text:{format:{type:'json_schema',name:'propose_items',strict:true,schema:schema_(c.owner)}}}),muteHttpExceptions:true});
   need_(res.getResponseCode()===200,'Sorting failed. Your capture is safe. Tap Retry.');
   const data=JSON.parse(res.getContentText());need_(data.status==='completed','Sorting did not finish. Tap Retry.');
   const out=[];(data.output||[]).forEach(o=>(o.content||[]).forEach(x=>{if(x.type==='output_text')out.push(x.text);}));
@@ -290,12 +294,13 @@ function sortItems_(c){
 }
 function sensitive_(x){return ['purchase','price','decision_candidate'].includes(x.kind)||['decision_log_candidate','handbook_note'].includes(x.destination)||
   x.sensitive_topics.length>0||!!x.fields.price||/(\b(price|cost|money|budget|profit|salary|strategy|role|payment|paid|invoice|egp|usd|deposit)\b|سعر|جنيه|فلوس|ميزاني|تكلف|دفع|استراتيجي|صلاحيات)/i.test(Object.values(x.fields).join(' ')+' '+x.summary);} // values only: the field name "price" must not count
-function validateItem_(x,cid){need_(x&&typeof x==='object','Invalid item.');x.entry_id=cid;
+function validateItem_(x,cid,owner){need_(x&&typeof x==='object','Invalid item.');x.entry_id=cid;
   need_(KINDS.includes(x.kind)&&DESTS.includes(x.destination),'Invalid item.');short_(x.summary,1000);short_(x.reason,2000);
   need_(['create','update'].includes(x.operation),'Invalid operation.');short_(x.existing_record,1000);
   need_(x.fields&&typeof x.fields==='object'&&Array.isArray(x.sensitive_topics),'Invalid fields.');
   FIELD_NAMES.forEach(k=>{if(x.fields[k]==null)x.fields[k]='';short_(x.fields[k],4000);});
   if(x.fields.function&&!FUNCTIONS.includes(x.fields.function)){const f=FUNCTIONS.find(n=>norm_(n)===norm_(x.fields.function));x.fields.function=f||'';}
+  if(owner!=='Youssef'&&isLead_(x.fields.function))x.fields.function='';
   if(x.kind==='decision_candidate')x.destination='decision_log_candidate';
   if(x.destination==='board_task')need_(x.fields.title.trim(),'Task needs a title.');
   if(x.destination==='supplier')need_(x.fields.name.trim(),'Supplier needs a name.');
@@ -361,7 +366,7 @@ function confirm_(r,u){need_(Array.isArray(r.decisions)&&r.decisions.length<=60,
    if(dec.edits){need_(u.admin||c.owner===u.name,'Access denied.');const before=JSON.stringify({summary:x.summary,destination:x.destination,fields:x.fields});
      const next=JSON.parse(JSON.stringify(x));['summary','destination'].forEach(k=>{if(typeof dec.edits[k]==='string')next[k]=dec.edits[k];});
      if(dec.edits.fields)FIELD_NAMES.forEach(k=>{if(typeof dec.edits.fields[k]==='string')next.fields[k]=dec.edits.fields[k];});
-     validateItem_(next,c.id);if(before!==JSON.stringify({summary:next.summary,destination:next.destination,fields:next.fields})){Object.assign(x,next);x.revision++;}
+     validateItem_(next,c.id,c.owner);if(before!==JSON.stringify({summary:next.summary,destination:next.destination,fields:next.fields})){Object.assign(x,next);x.revision++;}
      else x.needs_youssef=next.needs_youssef;}
    if(dec.decision==='reject'){x.status='rejected';x.result='Not saved: rejected';saveCap_(s,true);return done();}
    if(dec.decision==='keep'){x.status='kept';x.result='Kept in Inbox';saveCap_(s,true);return done();}
@@ -476,8 +481,8 @@ function board_(which){const s=taskSheet_(which),n=s.getLastRow(),w=s.getLastCol
   return {tasks:tasks,statuses:statuses_(s,m,tasks.map(t=>t.status)),today:date_()};}
 
 /* ---------- 5b. task changes: status, edit, drop. Preview first, then write, then read back ---------- */
-// Rules (Youssef, 14 Nov): Youssef changes any task. Ahmad changes his own tasks; a change to another
-// founder's task, or giving his task to someone else, becomes a request that waits for Youssef.
+// Rules (Youssef, 14 Nov, v3.7): both founders change any shared Board task directly (preview first).
+// Leadership tasks are hidden from Ahmad. Old open requests can still be approved or rejected by Youssef.
 // Drop = status "Dropped" + reason in Notes. Rows are never deleted. A status change also updates the
 // product's Pipeline row (Last updated; a Next step / Blocker that was this task becomes "Check: ..." / "None").
 const OWNERS=['Youssef','Ahmad'];
@@ -506,8 +511,9 @@ function planTask_(r,u){
   const op=String(r.op||'');need_(['status','edit','drop'].includes(op),'Invalid change.');
   const which=r.board===STRAT?STRAT:'';if(which)need_(u.admin,'Only Youssef can see the Strategy Board.');
   const s=taskSheet_(which),w=s.getLastColumn(),m=taskMap_(s.getRange(1,1,1,w).getDisplayValues()[0]),all=board_(which);
-  let task=all.tasks.find(t=>t.row===r.row);
-  if(!task||task.title!==r.title){const same=all.tasks.filter(t=>t.title===r.title);need_(same.length===1,'The Board changed. Refresh and try again.');task=same[0];}
+  const seen=u.admin?all.tasks:all.tasks.filter(t=>!isLead_(t.function));
+  let task=seen.find(t=>t.row===r.row);
+  if(!task||task.title!==r.title){const same=seen.filter(t=>t.title===r.title);need_(same.length===1,'The Board changed. Refresh and try again.');task=same[0];}
   const row=task.row,fullNotes=m.notes>=0?s.getRange(row,m.notes+1).getDisplayValue():'',set={};
   if(op==='status'){short_(r.status,60);need_(all.statuses.includes(r.status)||r.status==='Dropped','Invalid status.');
     need_(r.status!==task.status,'No change.');set.status=r.status;}
@@ -519,14 +525,15 @@ function planTask_(r,u){
     if(c.owner!=null){const v=String(c.owner);need_(OWNERS.includes(v),'The owner must be Youssef or Ahmad.');if(v!==task.owner)set.owner=v;}
     if(c.due!=null){const v=String(c.due).trim();need_(v===''||/^\d{4}-\d{2}-\d{2}$/.test(v),'The due date must be YYYY-MM-DD.');if(v!==iso_(task.due))set.due=v;}
     if(c.product!=null){const v=short_(String(c.product).trim(),100);if(v!==task.product)set.product=v;}
-    if(c.function!=null){const v=String(c.function);need_(v===''||FUNCTIONS.includes(v),'Unknown function.');if(v!==task.function)set.function=v;}
+    if(c.function!=null){const v=String(c.function);need_(v===''||fnsFor_(u.admin?'Youssef':u.name).includes(v),'Unknown function.');if(v!==task.function)set.function=v;}
     if(c.notes!=null){const v=short_(String(c.notes).trim(),3000);if(v!==fullNotes.trim())set.notes=v;}
     need_(Object.keys(set).length,'Nothing changed.');}
   Object.keys(set).forEach(k=>need_(m[k]>=0,'The Board has no '+(FIELD_LABEL[k]||k)+' column.'));
   if(set.status&&m.done>=0){if(isDoneSt_(set.status)&&!isDoneSt_(task.status))set.done=date_();
     else if(!isDoneSt_(set.status)&&isDoneSt_(task.status))set.done='';}
   const pipe=set.status&&!which?pipePlan_(task,set.status):null;
-  const direct=u.admin||(ownsTask_(u,task)&&!(set.owner&&set.owner!==u.name));
+  // Youssef, 14 Nov (v3.7): both founders change any shared task directly. No more requests.
+  const direct=true;
   const old={title:task.title,owner:task.owner,due:task.due,product:task.product,function:task.function,notes:fullNotes,status:task.status,done:task.done_date};
   const lines=Object.keys(set).map(k=>k==='notes'&&op==='drop'?'Notes: add "Dropped '+date_()+' by '+u.name+': '+cut_(r.reason,120)+'"'
     :(FIELD_LABEL[k]||k)+': '+(cut_(old[k],80)||'(empty)')+' → '+(cut_(set[k],80)||'(empty)'));
@@ -548,18 +555,20 @@ function applyPlan_(p,u,via){
     if(p.set.status){e.from=p.task.status;e.to=p.set.status;}
     if(via)e.via=via;L.push(e);jwrite_('_board_log.json',L.slice(-500));}
   catch(e){console.error('board log: '+e);}
-  if(!p.which)snapPatch_(p.task.title,{title:p.set.title||p.task.title,status:p.set.status||p.task.status,owner:p.set.owner||p.task.owner,due:p.set.due!=null?p.set.due:iso_(p.task.due)});
+  if(!p.which)snapPatch_(p.task.title,{title:p.set.title||p.task.title,status:p.set.status||p.task.status,owner:p.set.owner||p.task.owner,due:p.set.due!=null?p.set.due:iso_(p.task.due),lead:isLead_(p.set.function!=null?p.set.function:p.task.function)});
   const who=via?u.name+' (approved '+via.replace('request from ','')+"'s change)":u.name,title=p.task.title;
   const parts=[];['title','owner','due','product','function'].forEach(k=>{if(p.set[k]!=null)parts.push((FIELD_LABEL[k]||k).toLowerCase()+' → '+(p.set[k]||'(empty)'));});
   if(p.op==='edit'&&p.set.notes!=null)parts.push('notes');
   const text=p.op==='drop'?who+' dropped "'+title+'"'
     :p.op==='status'?who+' marked "'+title+'" '+p.set.status
     :who+' changed "'+title+'": '+parts.join(', ');
-  emit_([{by:u.name,kind:'board',vis:p.which?['Youssef']:'all',title:p.set.title||title,text:(p.which?'(Strategy Board) ':'')+text}]);}
+  const priv=p.which||isLead_(p.task.function)||isLead_(p.set.function);
+  emit_([{by:u.name,kind:'board',vis:priv?['Youssef']:'all',title:p.set.title||title,text:(p.which?'(Strategy Board) ':'')+text}]);}
 function requests_(){try{return jread_('_task_requests.json',[]);}catch(e){console.error('requests: '+e);return [];}}
 function boardFor_(u,which){
   if(which===STRAT){need_(u.admin,'Only Youssef can see the Strategy Board.');const b=board_(STRAT);b.requests=[];b.which=STRAT;return b;}
   const b=board_();try{lock_(()=>boardDiff_(b));}catch(e){console.error('board diff: '+e);}
+  if(!u.admin)b.tasks=b.tasks.filter(t=>!isLead_(t.function));
   b.requests=requests_().filter(q=>q.state==='open'&&(u.admin||q.by===u.name)).map(q=>({id:q.id,by:q.by,at:q.at,title:q.req.title,row:q.req.row,op:q.req.op,lines:q.lines}));
   return b;}
 // r.dry = true: return the preview only. Otherwise write (or file a request for Youssef).
@@ -596,21 +605,24 @@ function emit_(evs){if(!evs||!evs.length)return;
   catch(e){console.error('activity: '+e);}}
 function activity_(u){let L=[];try{L=jread_('_activity.json',[]);}catch(e){}
   const since=new Date(Date.now()-14*86400000).toISOString();
-  return {events:L.filter(e=>e.at>since&&(u.admin||e.vis==='all'||(Array.isArray(e.vis)&&e.vis.includes(u.name)))).slice(-300).reverse()};}
+  let lead=new Set();if(!u.admin)try{const S=jread_('_board_snap.json',{})||{};Object.keys(S).forEach(k=>{if(S[k].l)lead.add(k);});}catch(e){}
+  // Older events about Leadership tasks (before v3.7) are hidden from Ahmad by title.
+  return {events:L.filter(e=>e.at>since&&(u.admin||((e.vis==='all'||(Array.isArray(e.vis)&&e.vis.includes(u.name)))&&!(e.title&&lead.has(norm_(e.title)))))).slice(-300).reverse()};}
 // Board snapshot (title -> status/owner/due) to notice changes made outside the app.
-function snapOf_(tasks){const m={};tasks.forEach(t=>{m[norm_(t.title)]={t:t.title,s:t.status,o:t.owner,d:iso_(t.due)};});return m;}
+function snapOf_(tasks){const m={};tasks.forEach(t=>{m[norm_(t.title)]={t:t.title,s:t.status,o:t.owner,d:iso_(t.due)};if(isLead_(t.function))m[norm_(t.title)].l=1;});return m;}
 function snapPatch_(oldTitle,t){try{const S=jread_('_board_snap.json',null);if(!S)return;
-    if(oldTitle)delete S[norm_(oldTitle)];if(t)S[norm_(t.title)]={t:t.title,s:t.status||'',o:t.owner||'',d:iso_(t.due)};
+    if(oldTitle)delete S[norm_(oldTitle)];if(t){S[norm_(t.title)]={t:t.title,s:t.status||'',o:t.owner||'',d:iso_(t.due)};if(t.lead)S[norm_(t.title)].l=1;}
     jwrite_('_board_snap.json',S);}catch(e){console.error('snapshot: '+e);}}
 function boardDiff_(b){let old=null;try{old=jread_('_board_snap.json',null);}catch(e){}
   const cur=snapOf_(b.tasks);
-  if(old){const ev=[],E=(title,text)=>ev.push({by:'Sheet',kind:'sheet',vis:'all',title:title,text:text});
+  if(old){const ev=[],E=(title,text,lead)=>ev.push({by:'Sheet',kind:'sheet',vis:lead?['Youssef']:'all',title:title,text:text});
     Object.keys(cur).forEach(k=>{const n=cur[k],o=old[k];
-      if(!o)return E(n.t,'Task added in the sheet: '+n.t+(n.o?' ('+n.o+')':''));
-      if(o.s!==n.s)E(n.t,'"'+n.t+'" '+(o.s||'(empty)')+' → '+(n.s||'(empty)')+' (in the sheet)');
-      if(o.o!==n.o)E(n.t,'"'+n.t+'" owner '+(o.o||'(empty)')+' → '+(n.o||'(empty)')+' (in the sheet)');
-      if(o.d!==n.d)E(n.t,'"'+n.t+'" due '+(o.d||'(empty)')+' → '+(n.d||'(empty)')+' (in the sheet)');});
-    Object.keys(old).forEach(k=>{if(!cur[k])E(old[k].t,'Task renamed or removed in the sheet: '+old[k].t);});
+      const L=n.l||(o&&o.l);
+      if(!o)return E(n.t,'Task added in the sheet: '+n.t+(n.o?' ('+n.o+')':''),L);
+      if(o.s!==n.s)E(n.t,'"'+n.t+'" '+(o.s||'(empty)')+' → '+(n.s||'(empty)')+' (in the sheet)',L);
+      if(o.o!==n.o)E(n.t,'"'+n.t+'" owner '+(o.o||'(empty)')+' → '+(n.o||'(empty)')+' (in the sheet)',L);
+      if(o.d!==n.d)E(n.t,'"'+n.t+'" due '+(o.d||'(empty)')+' → '+(n.d||'(empty)')+' (in the sheet)',L);});
+    Object.keys(old).forEach(k=>{if(!cur[k])E(old[k].t,'Task renamed or removed in the sheet: '+old[k].t,old[k].l);});
     emit_(ev.length>25?[{by:'Sheet',kind:'sheet',vis:'all',text:ev.length+' changes in the Board sheet (for example by a stand-up)'}]:ev);}
   if(!old||JSON.stringify(old)!==JSON.stringify(cur))jwrite_('_board_snap.json',cur);}
 

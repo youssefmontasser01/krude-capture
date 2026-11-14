@@ -33,7 +33,7 @@ CLAUDE.md               this file
 - Ideas: items with kind `idea`. The owner (or Youssef) can put one on the shared jam list; either founder can mark it discussed. Ahmad sees Youssef's ideas only when they are on the jam list (summary and notes only).
 - Weekly report: moved / blocked / needs decision. KRUDE weeks start on Sunday and are named by that date (same as the Board Week column), Cairo time. Due from Thursday until the Sunday 10:00 stand-up; Ahmad sees a banner until it is sent. The draft is filled from `_board_log.json` (status changes made in the app), Blocked tasks and his items that wait for Youssef. Stored in `_reports.json` and appended to "21 - Weekly Reports" (`REPORTS_DOC_ID`).
 - Board rules in the app (from 07 / 00 - ChatGPT Project Instructions): a status change to Done writes the Done date (reopen clears it); Dropped counts as closed. New tasks from Capture get Product, Function (fixed list `FUNCTIONS`), Week (Sunday of the due date, else this week) and a "Check: no owner / due date" note when one is missing.
-- Task changes (Youssef, 14 Nov): every change shows a preview, then writes, then reads the row back. Youssef changes any task. Ahmad changes his own tasks; a change to Youssef's task, or giving his task away, becomes a request in `_task_requests.json` that waits for Youssef (badge on the Board tab). Drop = status "Dropped" + reason in Notes; rows are never deleted. A status change also updates the product's Pipeline row: Last updated; a Next step / Blocker that names the task becomes "Check: set the next step" / "None" (old text kept in Pipeline Notes). The open tab reloads when the app comes back to the screen.
+- Task changes (Youssef, 14 Nov; v3.7): every change shows a preview, then writes, then reads the row back. Both founders change any shared Board task directly (`direct` is always true). The request flow (`_task_requests.json`, `task_request`) stays only so Youssef can close old open requests. Drop = status "Dropped" + reason in Notes; rows are never deleted. A status change also updates the product's Pipeline row: Last updated; a Next step / Blocker that names the task becomes "Check: set the next step" / "None" (old text kept in Pipeline Notes). The open tab reloads when the app comes back to the screen.
 - Review (v3.3): no default choice; untouched items stay "To review". Each card has "Goes to" (Board task / Supplier / Stays in Inbox). Items that only stayed in the Inbox (kept, or approved as "Kept in Inbox") can be reviewed again from History ("Review again").
 - Sorter (v3.3): anything someone must do = task / board_task, even without owner or date. "Needs Youssef" is decided by the app (`sensitive_`: kinds, destinations, sensitive_topics, money words in field VALUES), never by the sorter's own flag.
 - Board view (v3.3): Overdue → Today → This week (to Saturday) → Next week → Later → No due date; filters: owner, status (Open / To do / In progress / Blocked), group by date / product / function, search. Choices are kept in localStorage.
@@ -44,6 +44,7 @@ CLAUDE.md               this file
 - Handoffs (v3.4): one open doc per day, "Handoff - YYYY-MM-DD - KRUDE Capture items", in the KRUDE Operations root (ChatGPT renames it DONE and moves it to Handoffs).
 - Sorter context (v3.4): also gets the product names from Board › Pipeline. KRUDE facts and examples live in "19 - Capture Rules" (edited through ChatGPT handoffs).
 - Strategy Board (v3.5, Decision Log 13 Nov): an approved Board task with Function "Leadership" from Youssef's capture goes to "KRUDE Strategy Board (Private)" (`CFG.STRATEGY_SHEET_ID`, Tasks tab, same columns). Ahmad's tasks always go to Board v2. Youssef's Board tab has a Shared / Strategy (private) switch (`board` with `which:'strategy'`, `task_change` with `board:'strategy'`; admin only). Strategy changes: no Pipeline update, no sheet-diff, activity visible to Youssef only. Never show the Strategy Board to Ahmad.
+- Leadership (v3.7, Youssef 14 Nov): Ahmad never sees Leadership. `boardFor_` removes rows with Function Leadership for him; `planTask_` cannot find them; `fnsFor_` / `fns()` drop Leadership from his function lists and from the sorter schema and context; `validateItem_` clears it on his items; Board events and sheet-diff events for Leadership rows are `vis:['Youssef']`; `activity_` hides older events whose title is a Leadership task (flag `l` in `_board_snap.json`).
 - Phone safety: recordings are written to IndexedDB every second; the outbox keeps a capture until the server confirms it. Do not weaken this.
 
 ## Secrets (never in code, never in git)
@@ -75,15 +76,16 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
    DEPLOYMENT_ID: `AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA`
 6. Tell Youssef in 2–4 short lines what changed and what to test on the phone. If the backend changed, say if a new function must be run once.
 
-## Open decisions (Youssef, at the Kickoff)
+## Decided 14 Nov (v3.7)
 
-- D1: Ahmad sees all Board tasks in the app, including notes (decision 12 Nov: he gets his tasks after the stand-up). He can change only his own. Keep / show his own tasks only.
-- D2: decided 14 Nov (changes with preview, see above).
-- D3: Ahmad can approve his own simple tasks from Capture straight to the Board. Keep / send to the Inbox for Sunday sorting.
+- D1: both founders see all shared Board tasks, notes included. Leadership is hidden from Ahmad everywhere.
+- D2: changes with preview (see Task changes). Both founders change any shared task directly.
+- D3: both founders approve their own simple captured tasks straight to the Board. Money, prices, roles and strategy still wait for Youssef.
 
 ## Open items
 
 - Records: "Handoff - 2026-11-14 - Close of KRUDE Capture v3.6 session" (KRUDE Operations root) waits for ChatGPT. It fixes the Save rule wording, sets State to "v3.6 live" and closes the 13 Nov v3 handoff.
+- Records: D1/D3/Leadership decisions (14 Nov, v3.7) are not yet in the Decision Log; make a handoff.
 - Ahmad's test feedback: not received yet.
 
 - Real iPhone test of recovery (close Safari mid-recording) and offline send.
