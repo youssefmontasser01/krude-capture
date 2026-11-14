@@ -88,7 +88,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 
 ## Open items
 
-- v4.0 Ideas: on branch `claude/upbeat-mendel-y6z33i`, not live. Youssef: say "merge", paste Code.js + New version of "capture v3.6", run `setupV40`, `importIdeasOnCopy`, `importIdeas`. Pipeline Stage list must contain "Design" for "In design".
+- v4.0 Ideas live 14 Nov (app on main, backend deployed by Youssef, `setupV40` run). Import not needed: `importIdeasOnCopy` found 0 ideas (the only old idea, "Luna felt shade", was rejected). Not reported yet: phone test of + Idea, jam list, outcomes, In design → Pipeline (Stage list must contain "Design").
 - v3.9 live 14 Nov (app on main, backend deployed by Youssef). Backfill import: tested on a copy (92 added, 1 merged, Electrocenter old cells kept, guard stops a second run). NOT yet run on the real sheet: Youssef runs `importBackfillSuppliers` once. Not reported yet: the phone tests (search, filter, add / edit / drop a test supplier with category "Test", Ahmad's Price read-only, rename "Test"), archive / restore / delete forever on a test task, the saving bar. Handoff for the Decision Log (Suppliers tab, archive / delete forever rule) and the Capture Rules change: Claude (Strategy chat).
 - Records: "Handoff - 2026-11-14 - Close of KRUDE Capture v3.8 session" (KRUDE Operations root) waits for ChatGPT: v3.8 rule in the Decision Log, State to "v3.8 live", two Capture Inbox lines (test + rollback). The v3.6 and v3.7 handoffs are DONE.
 - v3.8 live 14 Nov (backend deployed by Youssef, app on main). First real test of a capture that changes a task: not reported yet.
