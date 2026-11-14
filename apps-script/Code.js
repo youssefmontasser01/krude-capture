@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=4.0;
+const VERSION=4.1;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -1081,4 +1081,31 @@ function importIdeas_(sheetId){const ss=ideaBook_(sheetId);
     const ids=new Set(add.map(v=>v.id)),got=ideaRead_(ss).rows.filter(x=>ids.has(x.id)).length;
     need_(got===add.length,'Not verified: '+got+' of '+add.length+' ideas were found after the write. Check the sheet.');
     console.log('Ideas import on "'+ss.getName()+'": '+add.length+' added ('+add.filter(v=>v.private).length+' private, '+add.filter(v=>v.jam).length+' on the jam list), '+skip+' already in the sheet.');
+    return {added:add.length};});}
+
+// v4.1: one-time import of the 38 WhatsApp backfill ideas (25 "Capture Inbox (idea)" + 13 Pinterest references). Status Parked.
+// CSV "KRUDE Ideas import - backfill 2026-11-14.csv" (KRUDE Operations). Step 1: importBackfillIdeasOnCopy. Step 2: importBackfillIdeas.
+const IDEAS_BACKFILL_CSV_ID='1M7JfpawoU2wjDUhiHaZWHM4mwbeXTrBH';
+function importBackfillIdeas(){importBackfillIdeas_(props_().getProperty('IDEAS_SHEET_ID'));}
+function importBackfillIdeasOnCopy(){const copy=DriveApp.getFileById(ideaBook_().getId()).makeCopy('TEST COPY - 22 - Ideas (backfill) - '+date_(),DriveApp.getFolderById(CFG.OPS_FOLDER_ID));
+  console.log('Copy: '+copy.getUrl());importBackfillIdeas_(copy.getId());
+  console.log('Run again on the copy: the guard must stop it.');
+  try{importBackfillIdeas_(copy.getId());console.log('FAIL: the guard did not stop the second run.');}catch(e){console.log('OK: '+e.message);}
+  console.log('Move the copy to the trash when you are done.');}
+function importBackfillIdeas_(sheetId){const ss=ideaBook_(sheetId);
+  return lock_(()=>{ideaEnsure_(ss);const d=ideaRead_(ss);
+    need_(!d.rows.some(x=>/^WhatsApp backfill/i.test(x.source)),'STOP: the WhatsApp ideas are already in this sheet (a Source starts with "WhatsApp backfill"). Nothing was written.');
+    const csv=Utilities.parseCsv(DriveApp.getFileById(IDEAS_BACKFILL_CSV_ID).getBlob().getDataAsString('UTF-8').replace(/^﻿/,''));
+    const H=csv[0].map(x=>String(x).trim()),col=n=>{const i=H.indexOf(n);need_(i>=0,'CSV column missing: '+n);return i;};
+    const MAP={'Date':'date','Idea':'title','Notes':'notes','Owner':'owner','Private':'private','Status':'status','Status note':'status_note','Source':'source'};
+    Object.keys(MAP).forEach(col);
+    const add=csv.slice(1).filter(r=>r.some(x=>String(x).trim())).map(r=>{const v={};Object.keys(MAP).forEach(n=>v[MAP[n]]=String(r[col(n)]||'').trim());
+      need_(v.title,'A CSV row has no idea text.');if(!IDEA_STATUS.includes(v.status))v.status='Parked';v.private=isPriv_(v.private)?'Yes':'';
+      v.status_by='Backfill';v.status_date=date_();v.id=ideaNewId_();return v;});
+    if(add.length)d.sheet.getRange(d.sheet.getLastRow()+1,1,add.length,d.w).setValues(add.map(v=>{const a=new Array(d.w).fill('');Object.keys(v).forEach(k=>{if(d.m[k]>=0)a[d.m[k]]=supCell_(v[k]);});return a;}));
+    SpreadsheetApp.flush();
+    const ids=new Set(add.map(v=>v.id)),got=ideaRead_(ss).rows.filter(x=>ids.has(x.id));
+    need_(got.length===add.length,'Not verified: '+got.length+' of '+add.length+' ideas were found after the write. Check the sheet.');
+    got.forEach(x=>{const v=add.find(a=>a.id===x.id);need_(x.title===v.title&&x.source===v.source,'Not verified: row '+x.row+' does not match the CSV.');});
+    console.log('WhatsApp ideas import on "'+ss.getName()+'": '+add.length+' added ('+add.filter(v=>v.private).length+' private, all Parked). Expected: 38 added, 1 private.');
     return {added:add.length};});}
