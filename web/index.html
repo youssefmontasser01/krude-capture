@@ -166,6 +166,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 
   <!-- BOARD -->
   <section id="vBoard" class="hide">
+    <div class="seg hide" id="bWhich" style="grid-template-columns:1fr 1fr;margin:0 0 10px"><button data-which="">Shared board</button><button data-which="strategy">Strategy (private)</button></div>
     <input id="bQ" type="search" dir="auto" placeholder="Search tasks" style="margin-bottom:10px">
     <div class="row" id="bFilters" style="margin-bottom:8px"></div>
     <div class="row" id="bFilters2" style="margin-bottom:12px"></div>
@@ -380,7 +381,7 @@ function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'
   if(!done){const base=['board_task','supplier','inbox_only'],dsts=base.includes(x.destination)?base:base.concat([x.destination]);
     extra=`<div class="lbl">Goes to</div><select class="dsel" data-f="destination" data-id="${x.id}">${dsts.map(d=>`<option value="${d}" ${x.destination===d?'selected':''}>${esc(DEST[d]||d)}</option>`).join('')}</select>
     <div class="dst" data-dst="board_task" data-id="${x.id}" ${x.destination==='board_task'?'':'hidden'}><div class="lbl">Task title</div><input data-f="title" data-id="${x.id}" dir="auto" value="${esc(f.title||x.summary)}"><div class="grid">${fld('owner','Owner')}${fld('due_date','Due','date')}${fld('product','Product')}${fld('function','Function')}</div>
-      <div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.</div><div class="sim" data-id="${x.id}"></div></div>
+      <div class="why">Every Board task needs one owner and a due date. If you leave one empty, the task gets a "Check:" note.${ME.admin?' Function Leadership goes to your private Strategy Board.':''}</div><div class="sim" data-id="${x.id}"></div></div>
     <div class="dst" data-dst="supplier" data-id="${x.id}" ${x.destination==='supplier'?'':'hidden'}><div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div></div>`;}
   const approve=x.can_confirm?'Approve':'To Youssef';
   return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)}${done?' → '+esc(DEST[x.destination]||x.destination):''}${reKeep(x)&&!done?' · now kept in Inbox':''}</span>
@@ -444,9 +445,10 @@ $('list').onclick=async e=>{const t=e.target.closest('[data-send],[data-rev],[da
 $('refresh').onclick=loadList;
 
 /* ---------- Board: live read of Board Tasks. Changes: status, edit, drop (preview first) ---------- */
-let BOARD=null,BFILTER=null;
+let BOARD=null,BFILTER=null,BWHICH=LS.get('krude_bwhich')||'',REQS=[];
 try{BOARD=JSON.parse(LS.get('krude_board')||'null')}catch(e){}
-async function loadBoard(){try{BOARD=await call('board',{},60000);LS.set('krude_board',JSON.stringify(BOARD));renderBoard();}
+async function loadBoard(){const which=ME&&ME.admin?BWHICH:'';
+  try{const b=await call('board',{which},60000);if(which!==(ME&&ME.admin?BWHICH:''))return;setBoard(b);}
   catch(e){toast('Board: '+e.message);}}
 // Closed = done or dropped. Closed tasks are not open and not overdue.
 const isDone=t=>/^(done|complete|completed|finished|dropped|cancelled|canceled)$/i.test(t.status.trim());
@@ -458,12 +460,16 @@ function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
   $('bFilters').innerHTML=[ME.name,ME.name==='Youssef'?'Ahmad':'Youssef','All'].map(g=>`<button class="chip ${BFILTER===g?'on':''}" data-b="${g}">${g==='All'?'All':g===ME.name?'Me':g}</button>`).join('');
   $('bFilters2').innerHTML=['Open','To do','In progress','Blocked'].map(s=>`<button class="chip ${BSTAT===s?'on':''}" data-st="${s}">${s}</button>`).join('')+
     '<span style="flex-basis:100%;height:0"></span>'+['Date','Product','Function'].map(g=>`<button class="chip ${BGROUP===g?'on':''}" data-g="${g}">By ${g.toLowerCase()}</button>`).join('');
-  if(!BOARD){$('bList').innerHTML='<div class="empty">Loading…</div>';return;}
-  const reqs=BOARD.requests||[];$('bBadge').textContent=reqs.length;$('bBadge').classList.toggle('hide',!(ME.admin&&reqs.length));
+  $('bWhich').classList.toggle('hide',!ME.admin);$('bWhich').style.display=ME.admin?'grid':'';
+  $('bWhich').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.which===(ME.admin?BWHICH:'')));
+  $('bFilters').style.display=BWHICH&&ME.admin?'none':'';
+  $('bBadge').textContent=REQS.length;$('bBadge').classList.toggle('hide',!(ME.admin&&REQS.length));
+  if(!BOARD||(ME.admin&&(BOARD.which||'')!==BWHICH)){$('bList').innerHTML='<div class="empty">Loading…</div>';return;}
+  const reqs=BOARD.requests||[];
   const reqHTML=reqs.length?`<div class="sec" style="margin-top:0">${ME.admin?'Changes from Ahmad':'Waiting for Youssef'} · ${reqs.length}</div>`+
     reqs.map(q=>`<div class="hrow" data-req="${esc(q.id)}"><div class="m"><div class="t">${esc(q.title)}</div><div class="d">${esc(q.lines[0]||'')}${q.lines.length>1?' (+'+(q.lines.length-1)+')':''}</div></div><span class="pill wait">${ME.admin?'Review':'Waiting'}</span></div>`).join(''):'';
   const today=BOARD.today,q=($('bQ').value||'').trim().toLowerCase();
-  const mine=t=>BFILTER==='All'||t.owner.toLowerCase().includes(BFILTER.toLowerCase());
+  const mine=t=>BOARD.which||BFILTER==='All'||t.owner.toLowerCase().includes(BFILTER.toLowerCase());
   const hit=t=>!q||[t.title,t.notes,t.product,t.function,t.owner].join(' ').toLowerCase().includes(q);
   const stat=t=>BSTAT==='Open'||t.status.trim().toLowerCase()===BSTAT.toLowerCase();
   const byDue=(a,b)=>dueKey(a).localeCompare(dueKey(b))||a.row-b.row;
@@ -486,11 +492,12 @@ function renderBoard(){if(!ME)return;BFILTER=BFILTER||ME.name;
   if($('bDone'))$('bDone').onclick=()=>$('bDoneList').classList.toggle('hide');}
 $('bFilters2').onclick=e=>{const s=e.target.dataset.st,g=e.target.dataset.g;if(s){BSTAT=s;LS.set('krude_bstat',s);}if(g){BGROUP=g;LS.set('krude_bgroup',g);}if(s||g)renderBoard();};
 $('bQ').oninput=()=>renderBoard();
+$('bWhich').onclick=e=>{const w=e.target.dataset.which;if(w==null||w===BWHICH)return;BWHICH=w;LS.set('krude_bwhich',w);renderBoard();loadBoard();};
 $('bFilters').onclick=e=>{const g=e.target.dataset.b;if(g){BFILTER=g;renderBoard();}};
 /* ---------- Task screen: status, edit, drop. Every change shows a preview first (same rule as Crude Today) ---------- */
 const owns=t=>ME.admin||String(t.owner||'').toLowerCase().split(/[^a-z]+/).includes(ME.name.toLowerCase());
 const isoDue=v=>/^\d{4}-\d{2}-\d{2}/.test(v||'')?v.slice(0,10):'';
-function setBoard(b){BOARD=b;LS.set('krude_board',JSON.stringify(BOARD));renderBoard();}
+function setBoard(b){BOARD=b;if(!b.which){REQS=b.requests||[];LS.set('krude_board',JSON.stringify(BOARD));}renderBoard();}
 $('bList').onclick=e=>{const q=e.target.closest('[data-req]');if(q)return openRequest(q.dataset.req);
   const r=e.target.closest('[data-row]');if(!r)return;const t=BOARD.tasks.find(x=>x.row===+r.dataset.row);if(t)openTask(t);};
 function openTask(t){const mine=owns(t),closed=isDone(t);
@@ -526,7 +533,7 @@ function openTask(t){const mine=owns(t),closed=isDone(t);
       <button class="btn" id="dGo">Preview</button>`;
     $('dGo').onclick=()=>{const why=$('dWhy').value.trim();if(!why)return toast('Write why you drop it.');preview(t,{op:'drop',reason:why});};};}
 async function preview(t,ch){const box=$('tWork');if(!box)return;box.innerHTML='<p class="who">Checking the Board…</p>';
-  const body=Object.assign({row:t.row,title:t.title},ch);let p;
+  const body=Object.assign({row:t.row,title:t.title,board:BOARD.which||''},ch);let p;
   try{p=await call('task_change',Object.assign({dry:true},body),60000);}catch(e){box.innerHTML=`<div class="banner err">${esc(e.message)}</div>`;return;}
   if(!$('tWork'))return;
   $('tWork').innerHTML=`<div class="lbl">This will change</div><div class="card" style="padding:12px">${p.plan.map(l=>`<p dir="auto" style="margin:4px 0">${esc(l)}</p>`).join('')}</div>

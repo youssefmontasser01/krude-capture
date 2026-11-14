@@ -42,6 +42,7 @@ CLAUDE.md               this file
 - Sorting order (v3.4): sort first, then write the Inbox line (faster). A failed Inbox line is retried by the 5-minute job (`inbox` flag in the index).
 - Handoffs (v3.4): one open doc per day, "Handoff - YYYY-MM-DD - KRUDE Capture items", in the KRUDE Operations root (ChatGPT renames it DONE and moves it to Handoffs).
 - Sorter context (v3.4): also gets the product names from Board › Pipeline. KRUDE facts and examples live in "19 - Capture Rules" (edited through ChatGPT handoffs).
+- Strategy Board (v3.5, Decision Log 13 Nov): an approved Board task with Function "Leadership" from Youssef's capture goes to "KRUDE Strategy Board (Private)" (`CFG.STRATEGY_SHEET_ID`, Tasks tab, same columns). Ahmad's tasks always go to Board v2. Youssef's Board tab has a Shared / Strategy (private) switch (`board` with `which:'strategy'`, `task_change` with `board:'strategy'`; admin only). Strategy changes: no Pipeline update, no sheet-diff, activity visible to Youssef only. Never show the Strategy Board to Ahmad.
 - Phone safety: recordings are written to IndexedDB every second; the outbox keeps a capture until the server confirms it. Do not weaken this.
 
 ## Secrets (never in code, never in git)
@@ -56,6 +57,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 - Photos are stored as links only. No image analysis (cost).
 - Board tab: live read every time. Status, edit and drop in the app, with preview, read-back and Pipeline update (14 Nov; replaces "only the status can change"). New tasks still come through Capture.
 - Board is the only task list for the business. Captured tasks are not Board tasks until approved.
+- Leadership tasks live on the private Strategy Board (Youssef only); all other tasks on Board v2 (13 Nov).
 - Ahmad has no access to the KRUDE Operations Drive folder. He sees his own captures in History and the Board through the app.
 - Mobile first (iPhone Safari). Plain, warm-neutral KRUDE look. No frameworks, no build step.
 
