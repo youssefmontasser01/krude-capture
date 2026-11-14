@@ -88,7 +88,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 
 ## Open items
 
-- v3.9 Suppliers tab: code on branch, not live yet. Youssef: merge to main, paste Code.js + New version of "capture v3.6", run `setupV39`, `importBackfillSuppliersOnCopy`, then `importBackfillSuppliers`. Then the phone tests (Step 5 of the v3.9 brief), and archive / restore / delete forever on a test task.
+- v3.9 live 14 Nov (app on main, backend deployed by Youssef). Backfill import done: 92 added, 1 merged (Electrocenter: Pin, Price, Price date, Source filled; old cells kept); guard tested on a copy. Not reported yet: the phone tests (search, filter, add / edit / drop a test supplier with category "Test", Ahmad's Price read-only, rename "Test"), archive / restore / delete forever on a test task, the saving bar. Handoff for the Decision Log (Suppliers tab, archive / delete forever rule) and the Capture Rules change: Claude (Strategy chat).
 - Records: "Handoff - 2026-11-14 - Close of KRUDE Capture v3.8 session" (KRUDE Operations root) waits for ChatGPT: v3.8 rule in the Decision Log, State to "v3.8 live", two Capture Inbox lines (test + rollback). The v3.6 and v3.7 handoffs are DONE.
 - v3.8 live 14 Nov (backend deployed by Youssef, app on main). First real test of a capture that changes a task: not reported yet.
 - WhatsApp backfill: Youssef ran it in ChatGPT; he has the .xlsx and a reminder to review it (Capture Inbox 14 Nov).
