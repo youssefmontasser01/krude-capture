@@ -71,6 +71,7 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 5. Backend (only if `apps-script/` changed):
    `cd apps-script && clasp push -f && clasp deploy -i <DEPLOYMENT_ID> -d "<what changed>"`
    Always use `-i <DEPLOYMENT_ID>` so the `/exec` URL stays the same. Never create a new deployment.
+   By hand (Youssef, no clasp): paste Code.js into Code.gs, save, then Deploy › Manage deployments › "capture v3.6" (the only active one) › pencil › New version › Deploy. Each deployment is pinned to one version: updating any other deployment does not change the app. Check: open the `/exec` URL; it must show the new `version`.
    DEPLOYMENT_ID: `AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA`
 6. Tell Youssef in 2–4 short lines what changed and what to test on the phone. If the backend changed, say if a new function must be run once.
 
@@ -81,6 +82,9 @@ Optional overrides: `SORT_MODEL`, `TRANSCRIBE_MODEL`.
 - D3: Ahmad can approve his own simple tasks from Capture straight to the Board. Keep / send to the Inbox for Sunday sorting.
 
 ## Open items
+
+- Records: "Handoff - 2026-11-14 - Close of KRUDE Capture v3.6 session" (KRUDE Operations root) waits for ChatGPT. It fixes the Save rule wording, sets State to "v3.6 live" and closes the 13 Nov v3 handoff.
+- Ahmad's test feedback: not received yet.
 
 - Real iPhone test of recovery (close Safari mid-recording) and offline send.
 - Compare the cost estimate with the real OpenAI usage page after one month.
