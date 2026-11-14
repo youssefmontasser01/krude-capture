@@ -5,7 +5,7 @@
  *  Keys, file IDs and the OpenAI key stay in Script Properties (same names as v1).
  *  After you paste v3: run setupV3 once.
  */
-const VERSION=3.8;
+const VERSION=3.9;
 const CFG = Object.freeze({
   INBOX_DOC_ID:'1CZgMIqzJ4zQBm3ZlpVENsQPUZLq4YtMhUgRqpJX2BJA',
   OPS_FOLDER_ID:'1S4IrtPeEKZjZhMAg0VnGybpMR6XAGBaO',
@@ -23,7 +23,7 @@ const CFG = Object.freeze({
 });
 const DESTS=['board_task','task_update','supplier','inventory_change','decision_log_candidate','fill_backlog','handbook_note','inbox_only'];
 const KINDS=['task','supplier_contact','issue','purchase','price','idea','note','decision_candidate'];
-const FIELD_NAMES=['title','product','owner','due_date','function','name','phone','sells','price','place','notes'];
+const FIELD_NAMES=['title','product','owner','due_date','function','name','phone','sells','price','place','notes','category','pin']; // v3.9: category, pin (suppliers)
 // v3.8: a capture can change an existing Board task (destination task_update). ref = "B<row>" (Board v2) or "S<row>" (Strategy Board, Youssef only).
 // task = the task title when it was matched. Empty = no change for that field.
 const CHANGE_NAMES=['ref','task','status','due_date','owner','title','notes_add'];
@@ -141,6 +141,9 @@ function doPost(e){try{
  if(r.action==='reports')return json_({ok:true,...reports_(u)});
  if(r.action==='activity')return json_({ok:true,...activity_(u)});
  if(r.action==='lists')return json_({ok:true,...lists_(r)});
+ if(r.action==='suppliers')return json_({ok:true,...suppliers_(u)});
+ if(r.action==='supplier_change')return json_({ok:true,...supplierChange_(r,u)});
+ if(r.action==='category')return json_({ok:true,...categoryChange_(r,u)});
  if(r.action==='upload')return json_({ok:true,...upload_(r,u)});
  if(r.action==='review')return json_({ok:true,...review_(r,u)});
  if(r.action==='confirm')return json_({ok:true,...confirm_(r,u)});
@@ -249,7 +252,7 @@ function transcribe_(blob,secs){
   const pr=price_(model);if(!pr)console.warn('No price for '+model+'. Add it to CFG.PRICES.');
   return {text:String(d.text||'').trim(),cost:{usd:pr&&pr.min?round_(s/60*pr.min):0,secs:s,model:model}};
 }
-function table_(id,tab){const s=SpreadsheetApp.openById(id);const t=tab?s.getSheetByName(tab):s.getSheets()[0];need_(t,'Missing sheet tab: '+tab);
+function table_(id,tab){const s=SpreadsheetApp.openById(id);const t=tab?s.getSheetByName(tab):firstTab_(s);need_(t,'Missing sheet tab: '+tab);
   const n=t.getLastRow(),w=t.getLastColumn();need_(w>0,'Sheet needs a header row.');const header=t.getRange(1,1,1,w).getDisplayValues()[0];
   const start=Math.max(2,n-CFG.CONTEXT_ROWS+1);
   return {sheet:t,headers:header,rows:n>1?t.getRange(start,1,n-start+1,w).getDisplayValues():[],last_row:n};}
@@ -264,12 +267,13 @@ function context_(owner){
   // Small context = faster and cheaper: only the columns the sorter needs.
   const pick=(t,names)=>{const idx=t.headers.map((h,i)=>names.includes(norm_(h))?i:-1).filter(i=>i>=0);
     return {headers:idx.map(i=>t.headers[i]),rows:t.rows.map(r=>idx.map(i=>r[i]))};};
-  const board=table_(CFG.BOARD_SHEET_ID,'Tasks'),sup=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
+  const board=table_(CFG.BOARD_SHEET_ID,'Tasks'),sup=table_(supId_());
+  let cats=[];try{cats=catList_();}catch(e){console.error('categories: '+e);}
   let products=[];try{products=table_(CFG.BOARD_SHEET_ID,'Pipeline').rows.map(r=>r[0]).filter(Boolean);}catch(e){}
   if(owner!=='Youssef'){const fc=board.headers.findIndex(h=>norm_(h)==='function');if(fc>=0)board.rows=board.rows.filter(r=>!isLead_(r[fc]));}
   const open=openTasks_(owner);
   return {data:{board_tasks:pick(board,['task','task name','title','name','product','owner','status','function','due','due date','week']),
-          open_tasks:open.list,suppliers:pick(sup,['name','sells','place']),products:products},refs:open.refs};
+          open_tasks:open.list,suppliers:pick(sup,['name','sells','place','category']),supplier_categories:cats,products:products},refs:open.refs};
 }
 function schema_(owner){const fp={};FIELD_NAMES.forEach(k=>fp[k]={type:'string'});fp.function={type:'string',enum:fnsFor_(owner).concat([''])};
   const obj={entry_id:{type:'string'},kind:{type:'string',enum:KINDS},summary:{type:'string'},destination:{type:'string',enum:DESTS},
@@ -292,6 +296,8 @@ function sortItems_(c){
     'A change to a task that is already in open_tasks (new due date, new owner, a status such as In progress, Blocked or Done, a new title, or a fact to add to its notes) is destination task_update, operation update: '+
     'set change.ref to that task\'s ref and fill only the change fields that change (status from open_tasks.statuses; due_date as YYYY-MM-DD; notes_add = the new fact, short). '+
     'If you are not sure which task it is, leave change.ref empty; the founder picks it. Do not also make a new board_task for the same thing. For every other item, all change fields are empty strings. '+
+    'Suppliers (kind supplier_contact, destination supplier): name, phone, sells, place as said; category only when the capture names a trade that matches one of supplier_categories exactly, else empty; '+
+    'pin = a Google Maps link (or a website link) from the capture or photo links text, else empty. A capture that is only a place or a map pin with a shop name is a supplier_contact with an empty phone. '+
     'Board tasks: product only if the capture names a KRUDE product; function from the fixed list or empty; owner and due_date only if said, never guessed. '+
     'Use entry_id "'+c.id+'" for every item. Photos are attached as links only; do not describe them.\nRules:\n'+rules;
   const capture={entry_id:c.id,from:c.owner,date:date_(),type_hint:c.hint,typed_text:c.text,voice_text:c.transcript,photo_links:c.photos.map(p=>p.url)};
@@ -325,7 +331,9 @@ function validateItem_(x,cid,owner){need_(x&&typeof x==='object','Invalid item.'
     if(!OWNERS.includes(v.owner))v.owner='';if(v.due_date&&!/^\d{4}-\d{2}-\d{2}$/.test(v.due_date))v.due_date='';}
   if(x.kind==='decision_candidate')x.destination='decision_log_candidate';
   if(x.destination==='board_task')need_(x.fields.title.trim(),'Task needs a title.');
-  if(x.destination==='supplier')need_(x.fields.name.trim(),'Supplier needs a name.');
+  if(x.fields.pin&&!/^https?:\/\/\S+$/i.test(x.fields.pin.trim()))x.fields.pin='';
+  if(x.fields.category){let c=null;try{c=catList_().find(n=>catKey_(n)===catKey_(x.fields.category));}catch(e){}x.fields.category=c&&catKey_(c)!==catKey_(NO_CAT)?c:'';}
+  if(x.destination==='supplier')need_(x.fields.name.trim()||x.fields.pin.trim(),'Supplier needs a name or a map pin.');
   x.needs_youssef=sensitive_(x);return x;}
 
 /* ---------- 18 - Capture Inbox ---------- */
@@ -369,11 +377,13 @@ function append_(c,x,u){const marker='[capture-item:'+x.id+']';let dest=route_(x
      if(strat)return 'Saved to Strategy Board';
      snapPatch_(null,{title:v.title,status:'To do',owner:v.owner,due:v.due_date});
      return 'Saved to Board Tasks';}}
- if(dest==='supplier'){const t=table_(props_().getProperty('SUPPLIERS_SHEET_ID'));
-   if(isDuplicate_(t,x.fields.name,['name'])){x.operation='update';x.existing_record='Exact supplier name: '+x.fields.name;dest='handoff';}
-   else{const m={'date':date_(),'name':x.fields.name,'phone':x.fields.phone,'sells':x.fields.sells,'price':x.fields.price,'place':x.fields.place,'notes':x.fields.notes+' '+marker,'added by':c.owner,'photo link':c.photos.map(p=>p.url).join(' ')};
-     need_(t.headers.every(h=>Object.prototype.hasOwnProperty.call(m,norm_(h))),'Supplier headers changed. Use a handoff.');
-     t.sheet.appendRow(t.headers.map(h=>cleanCell_(m[norm_(h)])));SpreadsheetApp.flush();return 'Saved to Suppliers and Contacts';}}
+ if(dest==='supplier'){supEnsure_(supBook_());const t=table_(supId_());
+   if(x.fields.name.trim()&&isDuplicate_(t,x.fields.name,['name'])){x.operation='update';x.existing_record='Exact supplier name: '+x.fields.name;dest='handoff';}
+   else{// v3.9: also Category, Pin, Status Active and a stable ID. Columns are found by header name.
+     const m={'date':date_(),'name':x.fields.name,'phone':x.fields.phone,'sells':x.fields.sells,'price':x.fields.price,'place':x.fields.place,'notes':(x.fields.notes+' '+marker).trim(),'added by':c.owner,'photo link':c.photos.map(p=>p.url).join(' '),
+       'category':x.fields.category||'','pin':x.fields.pin||'','price date':x.fields.price?date_():'','source':'KRUDE Capture '+date_()+' '+c.owner,'original message':'','status':'Active','id':supNewId_()};
+     need_(t.headers.every(h=>!String(h).trim()||Object.prototype.hasOwnProperty.call(m,norm_(h))),'Supplier headers changed. Use a handoff.');
+     t.sheet.appendRow(t.headers.map(h=>supCell_(m[norm_(h)]||'')));SpreadsheetApp.flush();return 'Saved to Suppliers and Contacts';}}
  if(dest==='handoff'){// One open handoff doc per day for all approved Capture items (ChatGPT renames it DONE when applied).
    const title='Handoff - '+date_()+' - KRUDE Capture items',folder=DriveApp.getFolderById(CFG.OPS_FOLDER_ID),it=folder.getFilesByName(title);let id;
    if(it.hasNext())id=it.next().getId();else{const doc=DocumentApp.create(title);
@@ -669,9 +679,182 @@ function boardDiff_(b){let old=null;try{old=jread_('_board_snap.json',null);}cat
 
 /* ---------- 7. Read-only lists for both founders: Week goals, Products (Pipeline), Suppliers ---------- */
 // Ahmad has no Drive access; these give him (and Youssef on the phone) a read-only view. Edits stay in the sheets / through Capture.
-function rowsOf_(id,tab){const ss=SpreadsheetApp.openById(id),t=tab?ss.getSheetByName(tab):ss.getSheets()[0];need_(t,'Missing tab: '+tab);
+function rowsOf_(id,tab){const ss=SpreadsheetApp.openById(id),t=tab?ss.getSheetByName(tab):firstTab_(ss);need_(t,'Missing tab: '+tab);
   const n=t.getLastRow(),w=t.getLastColumn();if(n<1||w<1)return {headers:[],rows:[]};
   const v=t.getRange(1,1,n,w).getDisplayValues();return {headers:v[0],rows:v.slice(1).filter(r=>r.some(x=>String(x).trim()))};}
 function lists_(r){const k=String(r.list||'');need_(['week','products','suppliers'].includes(k),'Unknown list.');
-  const d=k==='week'?rowsOf_(CFG.BOARD_SHEET_ID,'Week'):k==='products'?rowsOf_(CFG.BOARD_SHEET_ID,'Pipeline'):rowsOf_(props_().getProperty('SUPPLIERS_SHEET_ID'));
+  const d=k==='week'?rowsOf_(CFG.BOARD_SHEET_ID,'Week'):k==='products'?rowsOf_(CFG.BOARD_SHEET_ID,'Pipeline'):rowsOf_(supId_());
   return {list:k,headers:d.headers,rows:d.rows.slice(0,500).map(x=>x.map(c=>String(c).slice(0,1000))),today:date_()};}
+
+/* ---------- 8. Suppliers tab (v3.9): "20 - Suppliers and Contacts" is the one source of truth ---------- */
+// The 9 old columns stay first and in this order. v3.9 adds 7 columns at the end and a Categories tab.
+// Columns are found by header name, never by position. Rows are never deleted (Status Dropped). Categories are never deleted.
+// Every change: preview (dry:true) -> write (inside the lock) -> read the row back.
+const SUP_OLD=['Date','Name','Phone','Sells','Price','Place','Notes','Added by','Photo link'];
+const SUP_NEW=['Category','Pin','Price date','Source','Original message','Status','ID'];
+const SUP_STATUS=['Active','Historical','Dropped'];
+const NO_CAT='No category',CAT_TAB='Categories';
+const CAT_START=[NO_CAT,'Routers / CNC','Wood store','Wood turner','Painters / Wood finishing','Veneer','Electrical / Lighting','Vinyl records','Printing / Packaging','Fabric','Tools','Glass / Acrylic','Media / Video'];
+// Fields the app can change. Source, Original message and ID: never from the app. Price, Price date: Youssef only.
+const SUP_EDIT={name:'Name',phone:'Phone',category:'Category',sells:'Sells',place:'Place',pin:'Pin',notes:'Notes',status:'Status',price:'Price',price_date:'Price date'};
+const SUP_KEY={date:'date',name:'name',phone:'phone',sells:'sells',price:'price',place:'place',notes:'notes',added_by:'added by',photo:'photo link',
+  category:'category',pin:'pin',price_date:'price date',source:'source',original:'original message',status:'status',id:'id'};
+const BACKFILL_CSV_ID='1c0PiaXNp-Zm1z85Ak9pWdpwmO0lGTjP5';
+function supId_(){return props_().getProperty('SUPPLIERS_SHEET_ID')||'1Euu-XyRadGJrOZXalInibYWsF8sghb-iUY3S3GWEgIY';}
+function supBook_(id){return SpreadsheetApp.openById(id||supId_());}
+// The supplier list = the first tab that is not "Categories".
+function firstTab_(ss){return ss.getSheets().find(t=>t.getName()!==CAT_TAB)||ss.getSheets()[0];}
+const catKey_=s=>String(s||'').toLowerCase().replace(/\s+/g,''); // no duplicates: compare without case and spaces
+const isNoCat_=s=>!String(s||'').trim()||catKey_(s)===catKey_(NO_CAT);
+function supNewId_(){return 'sup_'+Utilities.getUuid().replace(/-/g,'').slice(0,12);}
+// Text cell: a leading ' stops Sheets from changing phones (leading 0, +20), prices and dates. The ' is not shown.
+function supCell_(v){v=String(v==null?'':v);return /^[=+\-@\t\r]/.test(v)||/^[\d\s.,\/:]+$/.test(v)||/^\d{4}-\d{2}-\d{2}/.test(v)?"'"+v:v;}
+const unq_=v=>String(v||'').replace(/^'/,'');
+// Adds the missing v3.9 columns and the Categories tab, and gives every row an ID (and Status Active if empty). Safe to run again.
+function supEnsure_(ss){const t=firstTab_(ss);let w=t.getLastColumn();need_(w>0,'The supplier sheet needs a header row.');
+  let h=t.getRange(1,1,1,w).getDisplayValues()[0];
+  SUP_OLD.forEach(n=>need_(h.some(x=>norm_(x)===norm_(n)),'Supplier column missing: '+n+'. Do not rename the old columns.'));
+  const add=SUP_NEW.filter(n=>!h.some(x=>norm_(x)===norm_(n)));
+  if(add.length){t.getRange(1,w+1,1,add.length).setValues([add]);w+=add.length;h=h.concat(add);}
+  let c=ss.getSheetByName(CAT_TAB);
+  if(!c){c=ss.insertSheet(CAT_TAB,ss.getSheets().length);c.getRange(1,1,CAT_START.length+1,1).setValues([['Category']].concat(CAT_START.map(x=>[x])));}
+  const m=supMap_(h),n=t.getLastRow();let fixed=0;
+  if(n>1){const v=t.getRange(2,1,n-1,w).getDisplayValues();
+    v.forEach((r,i)=>{if(!r.some(x=>String(x).trim()))return;
+      if(!String(r[m.id]).trim()){t.getRange(i+2,m.id+1).setValue(supNewId_());fixed++;}
+      if(!String(r[m.status]).trim()){t.getRange(i+2,m.status+1).setValue('Active');fixed++;}});}
+  if(add.length||fixed)SpreadsheetApp.flush();
+  return {added_columns:add,fixed_cells:fixed};}
+function supMap_(h){const m={};Object.keys(SUP_KEY).forEach(k=>m[k]=h.findIndex(x=>norm_(x)===norm_(SUP_KEY[k])));return m;}
+function supRead_(ss){const t=firstTab_(ss),n=t.getLastRow(),w=t.getLastColumn(),v=t.getRange(1,1,Math.max(n,1),w).getDisplayValues(),m=supMap_(v[0]);
+  const rows=[];for(let i=1;i<v.length;i++){const r=v[i];if(!r.some(x=>String(x).trim()))continue;const o={row:i+1};
+    Object.keys(SUP_KEY).forEach(k=>o[k]=m[k]>=0?String(r[m[k]]):'');rows.push(o);}
+  return {sheet:t,m:m,w:w,rows:rows};}
+function supCats_(ss){const c=ss.getSheetByName(CAT_TAB);if(!c)return {sheet:null,list:CAT_START.slice()};
+  const n=c.getLastRow(),v=n>1?c.getRange(2,1,n-1,1).getDisplayValues().map(r=>String(r[0]).trim()).filter(Boolean):[];
+  return {sheet:c,list:v,rows:n};}
+let CATS_=null;function catList_(){return CATS_||(CATS_=supCats_(supBook_()).list);} // one read per request
+function supPublic_(x,u){return {id:x.id,date:x.date,name:x.name,phone:x.phone,category:isNoCat_(x.category)?'':x.category,sells:x.sells,price:x.price,price_date:x.price_date,
+  place:x.place,pin:x.pin,notes:x.notes.slice(0,3000),added_by:x.added_by,photo:x.photo,source:x.source,original:x.original.slice(0,3000),status:x.status||'Active'};}
+// Read for both founders. Rows without an ID (added by hand in the sheet) get one here.
+function suppliers_(u){const ss=supBook_();let d=supRead_(ss);
+  if(d.m.id<0||d.m.status<0||!ss.getSheetByName(CAT_TAB)||d.rows.some(x=>!x.id.trim()||!x.status.trim())){lock_(()=>supEnsure_(ss));d=supRead_(ss);}
+  return {suppliers:d.rows.map(x=>supPublic_(x,u)),categories:supCats_(ss).list,can_price:!!u.admin,today:date_()};}
+function supPhoto_(r,u,id){if(!r.photo)return '';const drop=DriveApp.getFolderById(props_().getProperty('DROP_FOLDER_ID')),it=drop.getFoldersByName('Supplier photos');
+  const f=(it.hasNext()?it.next():drop.createFolder('Supplier photos')).createFile(blob_(r.photo,'image/jpeg',id+'_'+Date.now()+'.jpg',CFG.MAX_PHOTO));return f.getUrl();}
+// Works out exactly what an add or edit would write. Throws if it is not valid. r.op = 'add' | 'edit'.
+function supPlan_(r,u,ss){const op=String(r.op||'');need_(['add','edit'].includes(op),'Invalid change.');
+  const d=supRead_(ss),cats=supCats_(ss).list,f=r.fields&&typeof r.fields==='object'?r.fields:{},set={};
+  const val=(k,n)=>short_(String(f[k]==null?'':f[k]).trim(),n||1000);
+  const old=op==='edit'?d.rows.find(x=>x.id===String(r.id||'')):null;if(op==='edit')need_(old&&old.id,'This supplier is not in the sheet any more. Refresh.');
+  Object.keys(SUP_EDIT).forEach(k=>{if(f[k]==null)return;let v=val(k,k==='notes'?3000:1000);
+    if(k==='category'){if(isNoCat_(v))v='';else{const c=cats.find(n=>catKey_(n)===catKey_(v));need_(c,'Unknown category: '+v+'. Add it first.');v=c;}}
+    if(k==='status'){if(op==='add')return;need_(SUP_STATUS.includes(v),'Status must be Active, Historical or Dropped.');}
+    if(k==='pin')need_(!v||/^https?:\/\/\S+$/i.test(v),'The pin must be a link (Google Maps or a website).');
+    if(k==='price_date')need_(!v||/^\d{4}-\d{2}-\d{2}$/.test(v),'The price date must be YYYY-MM-DD.');
+    const was=old?(k==='category'&&isNoCat_(old.category)?'':old[k].trim()):'';
+    if(v===was)return;
+    if(k==='price'||k==='price_date')need_(u.admin,'Only Youssef can change Price and Price date.');
+    // Someone else changed this field after the phone read it.
+    if(old&&r.seen&&r.seen[k]!=null&&String(r.seen[k]).trim()!==was)need_(false,'This supplier changed in the sheet. Refresh and try again.');
+    set[k]=v;});
+  if(op==='edit'&&set.status==='Dropped'){const why=short_(String(r.reason||'').trim(),500);need_(why,'Write why you drop the supplier.');
+    const base=set.notes!=null?set.notes:old.notes.trim();set.notes=((base?base+' ':'')+'Dropped '+date_()+' by '+u.name+': '+why).trim();}
+  if(set.price!=null&&set.price&&set.price_date==null)set.price_date=date_();
+  const name=op==='add'?(set.name||''):(set.name!=null?set.name:old.name.trim()),pin=op==='add'?(set.pin||''):(set.pin!=null?set.pin:old.pin.trim());
+  need_(name||pin,'A supplier needs a name or a map pin.');
+  if(set.name)need_(!d.rows.some(x=>x!==old&&norm_(x.name)===norm_(set.name)),'A supplier with this name is already in the list. Edit that one.');
+  if(op==='add'){Object.assign(set,{date:date_(),added_by:u.name,status:'Active',id:supNewId_()});
+    if(set.price&&!u.admin)need_(false,'Only Youssef can set a price.');
+    if(r.photo)set.photo='(new photo)';}
+  else{if(r.photo)set.photo='(new photo)';need_(Object.keys(set).length,'Nothing changed.');}
+  Object.keys(set).forEach(k=>need_(d.m[k]>=0,'The supplier sheet has no '+(SUP_EDIT[k]||SUP_KEY[k])+' column. Run setupV39.'));
+  const L=k=>SUP_EDIT[k]||{date:'Date',added_by:'Added by',photo:'Photo link',id:'ID'}[k]||k;
+  const lines=op==='add'?['New row: '+(name||'Unknown place')+' (Status Active, added by '+u.name+')'].concat(Object.keys(set).filter(k=>!['date','added_by','status','id','name'].includes(k)&&set[k]).map(k=>L(k)+': '+cut_(set[k],120)))
+    :Object.keys(set).map(k=>k==='notes'&&set.status==='Dropped'&&r.reason?'Notes: add "Dropped '+date_()+' by '+u.name+': '+cut_(r.reason,120)+'"'
+      :k==='photo'?'Photo link: add 1 photo':L(k)+': '+(cut_(old[k],80)||'(empty)')+' → '+(cut_(set[k],80)||'(empty)'));
+  return {op:op,d:d,old:old,set:set,lines:lines,name:name};}
+function supplierChange_(r,u){const ss=supBook_();
+  if(r.dry){lock_(()=>supEnsure_(ss));const p=supPlan_(r,u,ss);return {plan:p.lines};}
+  const out=lock_(()=>{supEnsure_(ss);const p=supPlan_(r,u,ss),t=p.d.sheet,m=p.d.m;
+    const id=p.op==='add'?p.set.id:p.old.id;
+    if(p.set.photo){const url=supPhoto_(r,u,id);p.set.photo=p.op==='edit'&&p.old.photo.trim()?p.old.photo.trim()+' '+url:url;}
+    let row;
+    if(p.op==='add'){row=t.getLastRow()+1;const vals=new Array(p.d.w).fill('');Object.keys(p.set).forEach(k=>vals[m[k]]=supCell_(p.set[k]));
+      t.getRange(row,1,1,p.d.w).setValues([vals]);}
+    else{row=p.old.row;Object.keys(p.set).forEach(k=>t.getRange(row,m[k]+1).setValue(supCell_(p.set[k])));}
+    SpreadsheetApp.flush();
+    // Read back: find the row by ID again and check every written cell.
+    const back=supRead_(ss).rows.find(x=>x.id===id);need_(back,'Not verified: the row was not found after the write. Check the sheet.');
+    Object.keys(p.set).forEach(k=>need_(String(back[k]).trim()===unq_(supCell_(p.set[k])).trim()||String(back[k]).trim()===String(p.set[k]).trim(),'Not verified: '+(SUP_EDIT[k]||k)+' did not save. Check the sheet.'));
+    console.log('Supplier '+p.op+' '+id+' row '+row+' by '+u.name+': '+p.lines.join(' | '));
+    const nm=p.name||'Unknown place';
+    emit_([{by:u.name,kind:'supplier',vis:'all',text:p.op==='add'?u.name+' added a supplier: '+nm
+      :p.set.status==='Dropped'?u.name+' dropped the supplier '+nm:u.name+' changed the supplier '+nm+': '+Object.keys(p.set).map(k=>(SUP_EDIT[k]||k).toLowerCase()).join(', ')}]);
+    return {id:id};});
+  return Object.assign(out,suppliers_(u));}
+// Categories: add (no duplicates) or rename (also every supplier with that category). Never delete.
+function categoryChange_(r,u){const op=String(r.op||'');need_(['add','rename'].includes(op),'Invalid change.');const ss=supBook_();
+  const plan=()=>{supEnsure_(ss);const c=supCats_(ss),to=short_(String(r.to||r.name||'').trim(),80);need_(to,'Write the category name.');
+    need_(!/[\r\n]/.test(to),'One line only.');
+    if(op==='add'){need_(!c.list.some(n=>catKey_(n)===catKey_(to)),'This category is already in the list.');return {c:c,to:to,lines:['Categories: add "'+to+'"']};}
+    const from=c.list.find(n=>n===String(r.from||''));need_(from,'This category is not in the list any more. Refresh.');
+    need_(!isNoCat_(from)&&!isNoCat_(to),'"No category" cannot be renamed.');
+    need_(from!==to,'Nothing changed.');need_(!c.list.some(n=>n!==from&&catKey_(n)===catKey_(to)),'This category is already in the list.');
+    const d=supRead_(ss),hit=d.rows.filter(x=>catKey_(x.category)===catKey_(from));
+    return {c:c,to:to,from:from,d:d,hit:hit,lines:['Categories: "'+from+'" → "'+to+'"','Suppliers with this category: '+hit.length+' (they get the new name)']};};
+  if(r.dry){const p=lock_(plan);return {plan:p.lines,count:p.hit?p.hit.length:0};}
+  lock_(()=>{const p=plan();
+    if(op==='add'){p.c.sheet.getRange(p.c.sheet.getLastRow()+1,1).setValue(supCell_(p.to));}
+    else{const i=p.c.list.indexOf(p.from);p.c.sheet.getRange(i+2,1).setValue(supCell_(p.to));
+      p.hit.forEach(x=>p.d.sheet.getRange(x.row,p.d.m.category+1).setValue(supCell_(p.to)));}
+    SpreadsheetApp.flush();
+    const c2=supCats_(ss).list;need_(c2.includes(p.to),'Not verified: the category did not save. Check the sheet.');
+    if(op==='rename'){const left=supRead_(ss).rows.filter(x=>x.category.trim()===p.from).length;need_(!left,'Not verified: '+left+' suppliers still have the old category.');}
+    emit_([{by:u.name,kind:'supplier',vis:'all',text:op==='add'?u.name+' added the supplier category '+p.to:u.name+' renamed the supplier category '+p.from+' → '+p.to+' ('+p.hit.length+' suppliers)'}]);});
+  return suppliers_(u);}
+
+// Run ONCE after you paste v3.9 (safe to run again): adds the 7 new columns, the Categories tab, an ID and Status on every row.
+function setupV39(){const x=lock_(()=>supEnsure_(supBook_()));console.log('v3.9 suppliers ready. New columns: '+(x.added_columns.join(', ')||'none')+'. Cells filled (ID / Status): '+x.fixed_cells+'.');}
+// One-time import of the WhatsApp backfill. Step 1: run importBackfillSuppliersOnCopy (works on a copy). Step 2: run importBackfillSuppliers (real sheet).
+function importBackfillSuppliers(){importBackfillSuppliers_(supId_());}
+function importBackfillSuppliersOnCopy(){const src=DriveApp.getFileById(supId_());
+  const copy=src.makeCopy('TEST COPY - 20 - Suppliers and Contacts - '+date_(),DriveApp.getFolderById(CFG.OPS_FOLDER_ID));
+  console.log('Copy: '+copy.getUrl());const before=supRead_(SpreadsheetApp.openById(copy.getId())).rows.map(x=>JSON.stringify(x));
+  importBackfillSuppliers_(copy.getId());
+  console.log('Run again on the copy: the guard must stop it.');
+  try{importBackfillSuppliers_(copy.getId());console.log('FAIL: the guard did not stop the second run.');}catch(e){console.log('OK: '+e.message);}
+  const after=supRead_(SpreadsheetApp.openById(copy.getId())).rows;
+  console.log('Electrocenter rows: '+after.filter(x=>norm_(x.name)==='electrocenter').length+'. Old rows before: '+before.length+'. Move the copy to the trash when you are done.');}
+function importBackfillSuppliers_(sheetId){
+  const ss=SpreadsheetApp.openById(sheetId);
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try{supEnsure_(ss);const d=supRead_(ss),t=d.sheet,m=d.m;
+    need_(!d.rows.some(x=>/^WhatsApp backfill/i.test(x.source.trim())),'STOP: the backfill is already in this sheet (a Source starts with "WhatsApp backfill"). Nothing was written.');
+    const csv=Utilities.parseCsv(DriveApp.getFileById(BACKFILL_CSV_ID).getBlob().getDataAsString('UTF-8').replace(/^﻿/,''));
+    const H=csv[0].map(x=>String(x).trim()),need=['Date','Name','Phone','Category','Sells','Price','Price date','Area','Pin','Notes','Source','Original message','Status','Added by'];
+    need.forEach(n=>need_(H.includes(n),'CSV column missing: '+n));
+    const col=n=>H.indexOf(n),rows=csv.slice(1).filter(r=>r.some(x=>String(x).trim()));
+    // CSV column -> sheet key. Area goes to Place.
+    const MAP={'Date':'date','Name':'name','Phone':'phone','Category':'category','Sells':'sells','Price':'price','Price date':'price_date','Area':'place','Pin':'pin','Notes':'notes','Source':'source','Original message':'original','Status':'status','Added by':'added_by'};
+    const add=[];let merged=0;const mergedCells=[];
+    rows.forEach(r=>{const v={};Object.keys(MAP).forEach(n=>v[MAP[n]]=String(r[col(n)]||'').trim());
+      if(/^Existing row Electrocenter/i.test(v.notes)){
+        const ex=d.rows.filter(x=>norm_(x.name)==='electrocenter');need_(ex.length===1,'STOP: expected one Electrocenter row, found '+ex.length+'. Nothing was written.');
+        ['pin','price','price_date','source'].forEach(k=>{if(v[k]&&!ex[0][k].trim()){mergedCells.push({row:ex[0].row,k:k,v:v[k]});}});
+        merged++;return;}
+      if(!SUP_STATUS.includes(v.status))v.status='Active';
+      v.id=supNewId_();v.photo='';add.push(v);});
+    need_(merged<=1,'STOP: more than one Electrocenter merge row in the CSV.');
+    const start=t.getLastRow()+1;
+    if(add.length)t.getRange(start,1,add.length,d.w).setValues(add.map(v=>{const a=new Array(d.w).fill('');Object.keys(v).forEach(k=>{if(m[k]>=0)a[m[k]]=supCell_(v[k]);});return a;}));
+    mergedCells.forEach(c=>t.getRange(c.row,m[c.k]+1).setValue(supCell_(c.v)));
+    SpreadsheetApp.flush();
+    // Read back.
+    const back=supRead_(ss),ids=new Set(add.map(v=>v.id)),got=back.rows.filter(x=>ids.has(x.id));
+    need_(got.length===add.length,'Not verified: '+got.length+' of '+add.length+' new rows were found after the write. Check the sheet.');
+    got.forEach(x=>{const v=add.find(a=>a.id===x.id);need_(x.name.trim()===v.name&&x.source.trim()===v.source,'Not verified: row '+x.row+' does not match the CSV.');});
+    mergedCells.forEach(c=>{const x=back.rows.find(y=>y.row===c.row);need_(x&&x[c.k].trim()===c.v,'Not verified: Electrocenter '+c.k+' did not save.');});
+    const msg='Import done on "'+ss.getName()+'": '+add.length+' added, '+merged+' merged ('+mergedCells.length+' empty cells filled on Electrocenter: '+(mergedCells.map(c=>c.k).join(', ')||'none')+'). CSV rows: '+rows.length+'. Expected: 92 added, 1 merged.';
+    console.log(msg);return {added:add.length,merged:merged};}
+  finally{lock.releaseLock();}}

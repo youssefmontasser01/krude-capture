@@ -49,7 +49,7 @@ audio{width:100%;margin-top:4px}
 .banner.err{background:#fbecea;border-color:#e9c3bd}
 .banner .row{margin-top:8px}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);display:flex;padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
-nav button{flex:1;background:none;border:none;font:inherit;font-size:14px;color:var(--mute);padding:10px;cursor:pointer}
+nav button{flex:1;min-width:0;background:none;border:none;font:inherit;font-size:13px;color:var(--mute);padding:10px 2px;cursor:pointer;white-space:nowrap}
 nav button.on{color:var(--ink);font-weight:600}
 nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;line-height:18px}
 .cap .meta{display:flex;justify-content:space-between;font-size:13px;color:var(--mute);margin-bottom:6px}
@@ -103,6 +103,19 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 .rep p{margin:3px 0;unicode-bidi:plaintext}
 .rep .h,.cost .h{font-size:12px;color:var(--mute)}
 .cost{font-size:14px;padding:6px 0;border-bottom:1px solid var(--line)}
+.hscroll{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:none}
+.hscroll::-webkit-scrollbar{display:none}
+.hscroll .chip{flex:none}
+.sup{padding:12px 14px;cursor:pointer}
+.sup .top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.sup .nm{font-weight:600;unicode-bidi:plaintext}
+.sup .sl{font-size:14px;margin:3px 0 0;unicode-bidi:plaintext}
+.sup .nt{font-size:13px;color:var(--mute);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;unicode-bidi:plaintext}
+.sup .acts{display:flex;gap:16px;margin-top:6px;font-size:14px}
+.sup .acts a{color:var(--ink)}
+.sup.dropped{opacity:.55}
+.orig{white-space:pre-wrap;font-size:13px;background:var(--soft);border-radius:10px;padding:10px 12px;unicode-bidi:plaintext;word-break:break-word}
+input:read-only{background:var(--soft);color:var(--mute)}
 </style>
 </head>
 <body>
@@ -172,7 +185,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 
   <!-- BOARD -->
   <section id="vBoard" class="hide">
-    <div class="seg" id="bView" style="grid-template-columns:repeat(4,1fr);margin:0 0 12px"><button data-view="tasks">Tasks</button><button data-view="week">Week</button><button data-view="products">Products</button><button data-view="suppliers">Suppliers</button></div>
+    <div class="seg" id="bView" style="grid-template-columns:repeat(3,1fr);margin:0 0 12px"><button data-view="tasks">Tasks</button><button data-view="week">Week</button><button data-view="products">Products</button></div>
     <div id="bTasks">
     <div class="seg hide" id="bWhich" style="grid-template-columns:1fr 1fr;margin:0 0 10px"><button data-which="">Shared board</button><button data-which="strategy">Strategy (private)</button></div>
     <input id="bQ" type="search" dir="auto" placeholder="Search tasks" style="margin-bottom:10px">
@@ -187,6 +200,15 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
       <div style="text-align:center"><button class="link" id="oRefresh">Refresh</button></div>
     </div>
   </section>
+
+  <!-- SUPPLIERS (v3.9): read and write "20 - Suppliers and Contacts" -->
+  <section id="vSup" class="hide">
+    <div style="display:flex;gap:8px;margin-bottom:10px"><input id="sQ" type="search" dir="auto" placeholder="Search suppliers"><button class="btn small" id="sAdd" style="flex:none">+ Supplier</button></div>
+    <div class="row hscroll" id="sCats" style="margin-bottom:8px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><label class="who" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="sDropped" style="width:auto"> Show dropped</label><button class="link" id="sManage">Manage categories</button></div>
+    <div id="sList"></div>
+    <div style="text-align:center"><button class="link" id="sRefresh">Refresh</button></div>
+  </section>
 </div>
 
 <nav id="nav" class="hide">
@@ -194,6 +216,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
   <button id="tItems">History<span class="n hide" id="badge"></span></button>
   <button id="tIdeas">Ideas</button>
   <button id="tBoard">Board<span class="n hide" id="bBadge"></span></button>
+  <button id="tSup">Suppliers</button>
 </nav>
 
 <div class="sheet" id="sheet"><div class="in" id="sheetIn"></div></div>
@@ -203,7 +226,7 @@ nav .n{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-
 const API_URL = 'https://script.google.com/macros/s/AKfycbzkNMBJg5duf7TlBuT155_CryBWkt0g04K_ejtPEIKcv3-QR--JGwada_EEO_B69SSHgA/exec';
 /* ======================================================================================== */
 
-const APP_VERSION=3.8; // raise with every release; the server (Code.js VERSION) should match
+const APP_VERSION=3.9; // raise with every release; the server (Code.js VERSION) should match
 const $=id=>document.getElementById(id);
 let SERVER_V=0;
 const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
@@ -326,7 +349,7 @@ async function updateStrip(){const all=await DB.all('outbox');const n=all.filter
   const b=$('sendNow');if(b)b.onclick=()=>{flush().then(()=>toast('Done.'))};}
 addEventListener('online',()=>{updateStrip();flush();});addEventListener('offline',updateStrip);document.addEventListener('visibilitychange',()=>{if(document.hidden||!ME)return;flush();
   // Fresh data each time the app comes back (Board changes made in the sheet or by the other founder).
-  loadActivity();if(CUR==='board'){if(BVIEW==='tasks')loadBoard();else loadSheetList(BVIEW);}else if(CUR==='items')loadList();else if(CUR==='ideas')loadIdeas();});setInterval(flush,60000);
+  loadActivity();if(CUR==='board'){if(BVIEW==='tasks')loadBoard();else loadSheetList(BVIEW);}else if(CUR==='items')loadList();else if(CUR==='ideas')loadIdeas();else if(CUR==='sup')loadSup();});setInterval(flush,60000);
 
 /* ---------- review ---------- */
 let progressT=null;
@@ -445,7 +468,8 @@ function propHTML(x){const f=x.fields||{},done=isFinal(x)||(x.status==='waiting'
       </div>
       <div class="lbl">Add to notes</div><input data-c="notes_add" data-id="${x.id}" dir="auto" placeholder="Nothing to add" value="${esc(ch.notes_add||'')}">
       <div class="tprev" data-id="${x.id}"></div></div>
-    <div class="dst" data-dst="supplier" data-id="${x.id}" ${x.destination==='supplier'?'':'hidden'}><div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}</div></div>`;}
+    <div class="dst" data-dst="supplier" data-id="${x.id}" ${x.destination==='supplier'?'':'hidden'}><div class="grid">${fld('name','Name')}${fld('phone','Phone','tel')}${fld('sells','Sells')}${fld('place','Place')}
+      <div><div class="lbl" style="margin-top:4px">Category</div><select data-f="category" data-id="${x.id}">${catOpts(f.category||'')}</select></div>${fld('pin','Pin (map link)','url')}</div></div>`;}
   const approve=x.can_confirm?'Approve':'To Youssef';
   return `<div class="card prop"><div class="top"><span class="kind">${esc(KIND[x.kind]||x.kind)}${done?' → '+esc(DEST[x.destination]||x.destination):''}${reKeep(x)&&!done?' · now kept in Inbox':''}</span>
    ${x.needs_youssef?'<span class="pill wait">Needs Youssef</span>':''}</div>
@@ -719,7 +743,7 @@ $('bell').onclick=openActivity;
 setInterval(()=>{if(!document.hidden&&ME)loadActivity();},120000);
 
 /* ---------- Board tab views: Week goals, Products (Pipeline), Suppliers. Read-only, from the sheets ---------- */
-let BVIEW=LS.get('krude_bview')||'tasks';const LISTS={};
+let BVIEW=LS.get('krude_bview')||'tasks';if(!['tasks','week','products'].includes(BVIEW))BVIEW='tasks'; // v3.9: Suppliers is its own tabconst LISTS={};
 try{Object.assign(LISTS,JSON.parse(LS.get('krude_lists')||'{}'))}catch(e){}
 function setView(v){BVIEW=v;LS.set('krude_bview',v);$('bView').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.view===v));
   $('bTasks').classList.toggle('hide',v!=='tasks');$('bOther').classList.toggle('hide',v==='tasks');
@@ -752,18 +776,139 @@ function renderOther(){const k=BVIEW,d=LISTS[k];$('oQ').placeholder={week:'Searc
 $('bView').onclick=e=>{const v=e.target.dataset.view;if(v)setView(v);};
 $('oQ').oninput=renderOther;$('oRefresh').onclick=()=>loadSheetList(BVIEW);
 
+/* ---------- Suppliers (v3.9): list, search, category filter, add, edit, categories. Preview → write → read back ---------- */
+let SUP=null,SCAT=LS.get('krude_scat')||'All';
+try{SUP=JSON.parse(LS.get('krude_sup')||'null')}catch(e){}
+const NO_CAT='No category';
+const catKey=s=>String(s||'').toLowerCase().replace(/\s+/g,'');
+const noCat=s=>!String(s||'').trim()||catKey(s)===catKey(NO_CAT);
+const supCats=()=>((SUP&&SUP.categories)||[]).filter(c=>!noCat(c));
+function catOpts(cur,withNew){const list=supCats();
+  return `<option value="">${NO_CAT}</option>`+list.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join('')+
+    (cur&&!noCat(cur)&&!list.includes(cur)?`<option selected>${esc(cur)}</option>`:'')+(withNew?'<option value="__new">+ New category</option>':'');}
+function setSup(d){SUP=d;LS.set('krude_sup',JSON.stringify(SUP));renderSup();}
+async function loadSup(){try{setSup(await call('suppliers',{},60000));}catch(e){toast('Suppliers: '+e.message);}}
+const firstLine=s=>String(s||'').replace(/\[capture-item:[^\]]*\]/g,'').trim().split(/\r?\n/)[0];
+const telOf=p=>String(p||'').replace(/[^\d+]/g,'');
+const SORD={Active:0,Historical:1,Dropped:2};
+function renderSup(){if(!ME)return;if(!SUP){$('sList').innerHTML='<div class="empty">Loading…</div>';return;}
+  const cats=supCats();if(SCAT!=='All'&&SCAT!==NO_CAT&&!cats.includes(SCAT))SCAT='All';
+  $('sCats').innerHTML=['All'].concat(cats,[NO_CAT]).map(c=>`<button class="chip ${SCAT===c?'on':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('');
+  const q=$('sQ').value.trim().toLowerCase(),showDrop=$('sDropped').checked;
+  const list=SUP.suppliers.filter(x=>(showDrop||x.status!=='Dropped')&&(SCAT==='All'||(SCAT===NO_CAT?noCat(x.category):x.category===SCAT))&&
+      (!q||[x.name,x.sells,x.place,x.notes,x.phone].join(' ').toLowerCase().includes(q)||telOf(x.phone).includes(q.replace(/[^\d+]/g,'')||'~')))
+    .sort((a,b)=>(SORD[a.status]??1)-(SORD[b.status]??1)||(a.name?0:1)-(b.name?0:1)||a.name.localeCompare(b.name));
+  const nDrop=SUP.suppliers.filter(x=>x.status==='Dropped').length;
+  $('sList').innerHTML=`<div class="who" style="margin:0 0 8px">${list.length} supplier${list.length===1?'':'s'}${!showDrop&&nDrop?' · '+nDrop+' dropped hidden':''}</div>`+
+    (list.map(x=>{const nt=firstLine(x.notes),ph=telOf(x.phone);
+    return `<div class="card sup ${x.status==='Dropped'?'dropped':''}" data-sup="${esc(x.id)}"><div class="top"><span class="nm">${esc(x.name||'Unknown place')}</span>
+      <span style="display:flex;gap:4px;flex:none">${x.status==='Historical'?'<span class="pill">Old</span>':''}${x.status==='Dropped'?'<span class="pill bad">Dropped</span>':''}<span class="pill ${noCat(x.category)?'':'phone'}">${esc(noCat(x.category)?NO_CAT:x.category)}</span></span></div>
+      ${x.sells?`<div class="sl">${esc(x.sells)}</div>`:''}
+      ${ph||x.pin?`<div class="acts">${ph?`<a href="tel:${esc(ph)}">${esc(x.phone)}</a>`:''}${x.pin?`<a href="${esc(x.pin)}" target="_blank" rel="noopener">${/maps|goo\.gl/i.test(x.pin)?'Open map':'Open link'}</a>`:''}</div>`:''}
+      ${nt?`<div class="nt">${esc(nt)}</div>`:''}</div>`;}).join('')||`<div class="empty">No supplier for this filter.</div>`);}
+$('sCats').onclick=e=>{const c=e.target.dataset.cat;if(c==null)return;SCAT=c;LS.set('krude_scat',c);renderSup();};
+$('sQ').oninput=renderSup;$('sDropped').onchange=renderSup;$('sRefresh').onclick=loadSup;
+$('sList').onclick=e=>{if(e.target.closest('a'))return;const c=e.target.closest('[data-sup]');if(!c||!SUP)return;const x=SUP.suppliers.find(s=>s.id===c.dataset.sup);if(x)openSupplier(x);};
+$('sAdd').onclick=()=>openSupplier(null);
+$('sManage').onclick=openCats;
+// One screen for add (x = null) and edit. Price: only Youssef. Source, Original message, ID: read-only.
+let supPhoto=null;
+function openSupplier(x){const add=!x,v=x||{},canPrice=!!(SUP&&SUP.can_price);supPhoto=null;
+  const inp=(k,label,type,ro)=>`<div><div class="lbl" style="margin-top:4px">${label}</div><input id="sf_${k}" type="${type||'text'}" dir="auto" value="${esc(v[k]||'')}" ${ro?'readonly':''}></div>`;
+  openSheet(`<div class="detail"><h2 dir="auto">${add?'New supplier':esc(v.name||'Unknown place')}</h2>
+    <div class="sub">${add?'Name or a map pin is required. It goes to "20 - Suppliers and Contacts".':esc([v.status,v.added_by?'Added by '+v.added_by:'',v.date].filter(Boolean).join(' · '))}</div>
+    <div class="prop"><div class="lbl" style="margin-top:0">Name</div><input id="sf_name" dir="auto" value="${esc(v.name||'')}" placeholder="Shop or person">
+    <div class="grid">${inp('phone','Phone','tel')}
+      <div><div class="lbl" style="margin-top:4px">Category</div><select id="sf_category">${catOpts(v.category||'',true)}</select></div>
+      ${inp('sells','Sells')}${inp('place','Place')}</div>
+    <div id="sNewCat"></div>
+    <div class="lbl">Pin (Google Maps link, or a website)</div><input id="sf_pin" type="url" value="${esc(v.pin||'')}" placeholder="https://maps.google.com/…">
+    ${add&&!canPrice?'':`<div class="grid">${inp('price','Price','text',!canPrice)}${inp('price_date','Price date','date',!canPrice)}</div>${canPrice?'':'<div class="why">Only Youssef can change Price and Price date.</div>'}`}
+    <div class="lbl">${add?'Note':'Notes'}</div><textarea id="sf_notes" dir="auto">${esc(v.notes||'')}</textarea>
+    ${add?'':`<div class="lbl">Status</div><div class="seg" id="sStat">${['Active','Historical','Dropped'].map(s=>`<button data-st="${s}" class="${(v.status||'Active')===s?'on':''}">${s}</button>`).join('')}</div>
+      <div id="sWhyBox" class="hide"><div class="lbl">Why drop it?</div><textarea id="sWhy" dir="auto" placeholder="For example: closed, bad quality, moved"></textarea><div class="why">The row stays in the sheet. The reason and the date go into Notes.</div></div>`}
+    <div class="lbl">Photo <span style="text-transform:none;letter-spacing:0">(optional)</span></div>
+    <div class="row"><label class="chip" for="sPhotoIn">${add?'Add photo':'Add a photo'}</label><input id="sPhotoIn" type="file" accept="image/*" class="hide"></div><div class="thumbs" id="sThumb"></div>
+    ${v.photo?`<p style="margin:6px 0">${String(v.photo).split(/\s+/).filter(Boolean).map((u,i)=>`<a href="${esc(u)}" target="_blank" rel="noopener">Photo ${i+1}</a>`).join(' · ')}</p>`:''}
+    ${v.original?`<div class="lbl">From WhatsApp</div><div class="orig">${esc(v.original)}</div>`:''}
+    ${v.source||v.id?`<p class="who" style="margin-top:8px">${esc([v.source?'Source: '+v.source:'',v.id?'ID: '+v.id:''].filter(Boolean).join(' · '))}</p>`:''}
+    </div>
+    <div id="sWork"><div class="btns"><button class="btn ghost" id="sX">Close</button><button class="btn" id="sGo">Preview</button></div></div></div>`);
+  let status=v.status||'Active';
+  if($('sStat'))$('sStat').onclick=e=>{const s=e.target.dataset.st;if(!s)return;status=s;$('sStat').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.st===s));$('sWhyBox').classList.toggle('hide',s!=='Dropped'||v.status==='Dropped');};
+  $('sf_category').onchange=()=>{if($('sf_category').value==='__new')newCatBox();};
+  $('sPhotoIn').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
+    try{supPhoto=await shrink(f);$('sThumb').innerHTML=`<div><img src="${URL.createObjectURL(supPhoto)}"><button id="sPhDel">✕</button></div>`;$('sPhDel').onclick=()=>{supPhoto=null;$('sThumb').innerHTML='';};}catch(err){toast('This photo cannot be read.');}};
+  const restore=()=>{$('sWork').innerHTML='<div class="btns"><button class="btn ghost" id="sX">Close</button><button class="btn" id="sGo">Preview</button></div>';bind();};
+  const bind=()=>{$('sX').onclick=closeSheet;$('sGo').onclick=go;};
+  const go=async()=>{if($('sf_category').value==='__new')return toast('Add the new category first, or pick one.');
+    const f={};['name','phone','sells','place','pin','notes'].forEach(k=>f[k]=$('sf_'+k).value.trim());f.category=$('sf_category').value;
+    if(canPrice&&$('sf_price')){f.price=$('sf_price').value.trim();f.price_date=$('sf_price_date').value.trim();}
+    if(!add)f.status=status;
+    if(!f.name&&!f.pin)return toast('Write a name, or add a map pin.');
+    const body={op:add?'add':'edit',fields:f};
+    if(!add){body.id=v.id;body.seen={};Object.keys(f).forEach(k=>body.seen[k]=k==='category'&&noCat(v[k])?'':String(v[k]||'').trim());
+      if(status==='Dropped'&&v.status!=='Dropped'){body.reason=$('sWhy').value.trim();if(!body.reason)return toast('Write why you drop it.');}}
+    $('sWork').innerHTML='<p class="who">Checking the sheet…</p>';
+    let p;try{p=await call('supplier_change',Object.assign({dry:true,photo:supPhoto?{data:'x'}:null},body),60000);}
+    catch(e){$('sWork').innerHTML=`<div class="banner err">${esc(e.message)}</div><div class="btns"><button class="btn ghost" id="sX">Close</button><button class="btn" id="sGo">Preview again</button></div>`;bind();return;}
+    if(!$('sWork'))return;
+    $('sWork').innerHTML=`<div class="lbl">This will ${add?'add':'change'}</div><div class="card" style="padding:12px">${p.plan.map(l=>`<p dir="auto" style="margin:4px 0">${esc(l)}</p>`).join('')}</div>
+      <div class="btns"><button class="btn ghost" id="sNo">Back</button><button class="btn" id="sYes">Confirm</button></div>`;
+    $('sNo').onclick=restore;
+    $('sYes').onclick=async()=>{const b=$('sYes');b.disabled=true;b.textContent='Saving…';
+      try{if(supPhoto)body.photo={data:b64(await supPhoto.arrayBuffer())};
+        const r=await call('supplier_change',body,120000);setSup(r);closeSheet();toast(add?'Supplier added and checked.':'Supplier saved and checked.');}
+      catch(e){b.disabled=false;b.textContent='Try again';toast(e.message);}};};
+  bind();
+  function newCatBox(){$('sNewCat').innerHTML=`<div class="card" style="padding:12px;margin-top:10px"><div class="lbl" style="margin-top:0">New category</div><input id="ncName" dir="auto" placeholder="For example: Metal work">
+    <div id="ncWork"><div class="row" style="margin-top:8px"><button class="btn small" id="ncGo">Preview</button><button class="btn small ghost" id="ncX">Cancel</button></div></div></div>`;
+    const cancel=()=>{$('sNewCat').innerHTML='';$('sf_category').value=noCat(v.category)?'':v.category;};
+    $('ncX').onclick=cancel;$('ncName').focus();
+    $('ncGo').onclick=async()=>{const name=$('ncName').value.trim();if(!name)return toast('Write the category name.');
+      if(supCats().concat([NO_CAT]).some(c=>catKey(c)===catKey(name)))return toast('This category is already in the list.');
+      try{const p=await call('category',{op:'add',name,dry:true},60000);
+        $('ncWork').innerHTML=`<div class="card" style="padding:10px;margin:8px 0 0">${p.plan.map(l=>`<p dir="auto" style="margin:3px 0">${esc(l)}</p>`).join('')}</div>
+          <div class="row" style="margin-top:8px"><button class="btn small" id="ncYes">Add category</button><button class="btn small ghost" id="ncX2">Cancel</button></div>`;
+        $('ncX2').onclick=cancel;
+        $('ncYes').onclick=async()=>{$('ncYes').disabled=true;$('ncYes').textContent='Saving…';
+          try{const r=await call('category',{op:'add',name},60000);SUP=r;LS.set('krude_sup',JSON.stringify(SUP));renderSup();
+            const c=r.categories.find(c=>catKey(c)===catKey(name))||name;$('sf_category').innerHTML=catOpts(c,true);$('sNewCat').innerHTML='';toast('Category added.');}
+          catch(e){toast(e.message);$('ncYes').disabled=false;$('ncYes').textContent='Try again';}};}
+      catch(e){toast(e.message);}};}}
+// Manage categories: rename only (a rename also changes every supplier with that category). No delete.
+function openCats(){if(!SUP)return;const cats=supCats(),n=c=>SUP.suppliers.filter(x=>x.category===c).length;
+  openSheet(`<div class="detail"><h2>Categories</h2><div class="sub">Tap a category to rename it. You cannot delete a category: rename it, or move its suppliers to "No category".</div>
+    ${cats.map(c=>`<div class="hrow" data-rc="${esc(c)}"><div class="m"><div class="t" dir="auto">${esc(c)}</div></div><span class="pill">${n(c)}</span></div>`).join('')}
+    <div class="hrow" style="cursor:default"><div class="m"><div class="t">${NO_CAT}</div></div><span class="pill">${SUP.suppliers.filter(x=>noCat(x.category)).length}</span></div>
+    <div id="cWork"></div><div class="row" style="margin-top:14px"><button class="btn small ghost" id="cClose">Close</button></div></div>`);
+  $('cClose').onclick=closeSheet;
+  $('sheetIn').querySelectorAll('[data-rc]').forEach(r=>r.onclick=()=>{const from=r.dataset.rc;
+    $('cWork').innerHTML=`<div class="card" style="padding:12px;margin-top:12px"><div class="lbl" style="margin-top:0">Rename "${esc(from)}"</div><input id="cTo" dir="auto" value="${esc(from)}">
+      <div id="cW2"><div class="row" style="margin-top:8px"><button class="btn small" id="cGo">Preview</button></div></div></div>`;
+    $('cTo').focus();
+    $('cGo').onclick=async()=>{const to=$('cTo').value.trim();if(!to||to===from)return toast('Write a new name.');
+      try{const p=await call('category',{op:'rename',from,to,dry:true},60000);
+        $('cW2').innerHTML=`<div class="card" style="padding:10px;margin:8px 0 0">${p.plan.map(l=>`<p dir="auto" style="margin:3px 0">${esc(l)}</p>`).join('')}</div>
+          <div class="row" style="margin-top:8px"><button class="btn small" id="cYes">Rename</button><button class="btn small ghost" id="cNo">Cancel</button></div>`;
+        $('cNo').onclick=()=>{$('cWork').innerHTML='';};
+        $('cYes').onclick=async()=>{$('cYes').disabled=true;$('cYes').textContent='Saving…';
+          try{const r=await call('category',{op:'rename',from,to},120000);if(SCAT===from){SCAT=to;LS.set('krude_scat',to);}setSup(r);toast('Renamed and checked.');openCats();}
+          catch(e){toast(e.message);$('cYes').disabled=false;$('cYes').textContent='Try again';}};}
+      catch(e){toast(e.message);}};});}
+
 /* ---------- shell ---------- */
 function openSheet(html){$('sheetIn').innerHTML=html;$('sheet').classList.add('on');}
 function closeSheet(){$('sheet').classList.remove('on');clearInterval(progressT);}
 $('sheet').onclick=e=>{if(e.target===$('sheet'))closeSheet();};
 let toastT;function toast(msg){let el=$('toast');if(!el){el=document.createElement('div');el.id='toast';el.style.cssText='position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1d1b18;color:#f4f1ec;padding:10px 16px;border-radius:10px;font-size:14px;z-index:20;max-width:90vw;text-align:center';document.body.appendChild(el);}
   el.textContent=msg;el.style.display='block';clearTimeout(toastT);toastT=setTimeout(()=>el.style.display='none',3500);}
-const TABS={cap:['vCap','tCap'],items:['vHist','tItems'],ideas:['vIdeas','tIdeas'],board:['vBoard','tBoard']};
+const TABS={cap:['vCap','tCap'],items:['vHist','tItems'],ideas:['vIdeas','tIdeas'],board:['vBoard','tBoard'],sup:['vSup','tSup']};
 let CUR='cap';
 function tab(name){CUR=name;Object.entries(TABS).forEach(([k,[v,t]])=>{$(v).classList.toggle('hide',k!==name);$(t).classList.toggle('on',k===name);});
-  if(name==='items'){renderList();loadList();}if(name==='ideas'){renderIdeas();loadIdeas();}if(name==='board')setView(BVIEW);}
+  if(name==='items'){renderList();loadList();}if(name==='ideas'){renderIdeas();loadIdeas();}if(name==='board')setView(BVIEW);if(name==='sup'){renderSup();loadSup();}}
 Object.entries(TABS).forEach(([k,[,t]])=>$(t).onclick=()=>tab(k));
-function needSetup(msg){['vCap','vHist','vIdeas','vBoard','nav'].forEach(i=>$(i).classList.add('hide'));$('vSetup').classList.remove('hide');
+function needSetup(msg){['vCap','vHist','vIdeas','vBoard','vSup','nav'].forEach(i=>$(i).classList.add('hide'));$('vSetup').classList.remove('hide');
   $('setApiWrap').classList.toggle('hide',!!API_URL);$('setKey').value='';if(msg)$('banners').innerHTML=`<div class="banner err">${esc(msg)}</div>`;}
 $('setGo').onclick=async()=>{const k=$('setKey').value.trim();if(k)LS.set('krude_key',k);const a=$('setApi').value.trim();if(a)LS.set('krude_api',a);start();};
 
@@ -786,7 +931,7 @@ async function start(){
   $('who').textContent=ME.name;reportBanner();['vCap','nav'].forEach(i=>$(i).classList.remove('hide'));tab('cap');
   renderHints();renderThumbs();canSave();updateStrip();recover();flush();
   if(ME.admin)loadBoard(); // shows the badge when Ahmad's changes wait
-  actBadge();loadActivity();
+  actBadge();loadActivity();if(!SUP)loadSup(); // categories for the review card
   $('vBanner').innerHTML=ME.admin&&SERVER_V&&SERVER_V<APP_VERSION?`<div class="banner">The server runs v${SERVER_V}, the app v${APP_VERSION}. Paste the new Code.js in Apps Script and deploy a New version.</div>`:'';
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 }
