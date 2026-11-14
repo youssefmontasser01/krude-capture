@@ -856,7 +856,8 @@ $('bell').onclick=openActivity;
 setInterval(()=>{if(!document.hidden&&ME)loadActivity();},120000);
 
 /* ---------- Board tab views: Week goals, Products (Pipeline), Suppliers. Read-only, from the sheets ---------- */
-let BVIEW=LS.get('krude_bview')||'tasks';if(!['tasks','week','products'].includes(BVIEW))BVIEW='tasks'; // v3.9: Suppliers is its own tabconst LISTS={};
+let BVIEW=LS.get('krude_bview')||'tasks';if(!['tasks','week','products'].includes(BVIEW))BVIEW='tasks'; // v3.9: Suppliers is its own tab
+const LISTS={};
 try{Object.assign(LISTS,JSON.parse(LS.get('krude_lists')||'{}'))}catch(e){}
 function setView(v){BVIEW=v;LS.set('krude_bview',v);$('bView').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.view===v));
   $('bTasks').classList.toggle('hide',v!=='tasks');$('bOther').classList.toggle('hide',v==='tasks');
